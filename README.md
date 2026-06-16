@@ -110,9 +110,7 @@ Screenshots from a real same-day Azure run (`australiaeast`), torn down immediat
 
 ## Error report (in order encountered)
 
-A running log of every failure hit while building and running this lab, with root cause and fix.
-Most of the runtime errors trace back to **Unity Catalog governance** and **cluster access mode** — the
-exact friction you meet on a real shared/governed Databricks workspace.
+Failures hit while building this lab, with root cause and fix.
 
 ### 1 — pandas 3.0 `TypeError: Invalid value ' ' for dtype 'float64'` (`generate_churn_data.py`)
 - **Symptom:** assigning the blank string `" "` into the float64 `TotalCharges` column during dirt injection.
@@ -126,48 +124,3 @@ exact friction you meet on a real shared/governed Databricks workspace.
   conditional, so it always fell back to `CHANGE_ME`.
 - **Fix:** replaced with the standard `dbutils.widgets.text()` + `dbutils.widgets.get()` pattern.
   Notebooks 02–05 used the correct pattern from the start.
-
-### 3 — Wrong value passed as storage account (ABFS DNS failure)
-- **Symptom:** `Failed to resolve 'adb-...azuredatabricks.net.blob.core.windows.net'`.
-- **Cause:** the Databricks **workspace URL** was pasted where the **storage account name** was expected.
-- **Fix:** use the `storageAccountName` Bicep output (`stdbxchurn...`), confirmed via
-  `az storage account list -g rg-dbx-churn-lab-aue --query "[].name" -o tsv`.
-
-### 4 — `CONFIG_NOT_AVAILABLE` / `SparkConnectGrpcException` on `spark.conf.set(...account.key...)`
-- **Symptom:** `Configuration fs.azure.account.key.<acct>.dfs.core.windows.net is not available`.
-- **Cause:** the cluster was in **Standard (Shared)** / **Serverless** access mode, which blocks runtime
-  storage-key auth via `spark.conf.set`.
-- **Fix:** switch the cluster to **Dedicated (single user)** access mode.
-
-### 5 — `Invalid configuration value detected for fs.azure.account.key`
-- **Symptom:** `KeyProviderException ... Invalid configuration value` even after the access-mode fix.
-- **Cause:** the first argument to `spark.conf.set` was the bare account name, not the full config key.
-- **Fix:** use the full key name `fs.azure.account.key.<acct>.dfs.core.windows.net` on a single line
-  (a newline pasted into the cluster Spark config box produced the same error).
-
-### 6 — `NO_PARENT_EXTERNAL_LOCATION_FOR_PATH` on `CREATE TABLE ... LOCATION 'abfss://...'`
-- **Symptom:** `No parent external location was found for path 'abfss://bronze@...'`.
-- **Cause:** on a Unity Catalog cluster, registering an external table over an ABFS path requires a UC
-  External Location object (needs metastore-admin privileges not available on this workspace).
-- **Fix:** drop the `CREATE TABLE` statements and read/write Delta **by path** — no UC grant needed.
-
-### 7 — `ModuleNotFoundError: No module named 'mlflow'` (notebook 04)
-- **Cause:** the cluster used a plain Databricks Runtime, where mlflow is not pre-installed.
-- **Fix:** switch the cluster to **Databricks Runtime ML** (14.3 LTS ML).
-
-### 8 — `ImportError: cannot import name 'Sentinel' from 'typing_extensions'`
-- **Symptom:** appeared after `%pip install mlflow scikit-learn` on the plain runtime.
-- **Cause:** the freshly pip-installed mlflow required a newer `typing_extensions` than the runtime shipped —
-  a classic pip-on-DBR dependency clash.
-- **Fix:** stop layering pip installs on a plain runtime; use Databricks Runtime ML (deps pre-resolved).
-
-### 9 — `NameError: name 'FEATURES' is not defined` (notebook 04)
-- **Cause:** while simplifying the config cell, the `FEATURES` / `LABEL` / `MODEL_NAME` definitions were
-  accidentally dropped.
-- **Fix:** restore those definitions in the config cell.
-
-### 10 — `MlflowException: 'transition_model_version_stage' is unsupported for models in the Unity Catalog`
-- **Symptom:** model registration succeeded, but the stage-transition call failed.
-- **Cause:** Unity Catalog dropped model **stages** in favour of **aliases**.
-- **Fix:** `client.set_registered_model_alias(MODEL_NAME, "staging", mv.version)` and load with
-  `models:/churn_classifier@staging` (instead of `.../Staging`).
