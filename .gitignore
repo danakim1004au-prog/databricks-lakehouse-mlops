@@ -1,0 +1,11 @@
+# generated dataset — reproduce with data/generate_churn_data.py (seeded)
+data/telco_churn.csv
+
+# personal lab notes (not for public repo)
+docs/SCREENSHOT_CHECKLIST.md
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+mlruns/
