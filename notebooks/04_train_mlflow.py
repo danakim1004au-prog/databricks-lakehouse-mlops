@@ -3,6 +3,10 @@
 # MAGIC # 04 — Train churn models with MLflow tracking + registry
 # MAGIC Logistic-regression baseline vs gradient boosting; both runs logged to MLflow,
 # MAGIC the winner registered as `churn_classifier` and promoted to Staging.
+# MAGIC
+# MAGIC **Requires a Databricks Runtime ML cluster** (e.g. 14.3 LTS ML) — mlflow and
+# MAGIC scikit-learn are pre-installed there. On a standard runtime, `%pip install`
+# MAGIC tends to break on `typing_extensions`/dependency conflicts, so use ML runtime.
 
 # COMMAND ----------
 
@@ -14,8 +18,17 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 
-dbutils.widgets.text("storage_account", "CHANGE_ME")
+dbutils.widgets.text("storage_account", "stdbxchurnamym3m")
+dbutils.widgets.text("storage_key", "PASTE_KEY_HERE")
+
 STORAGE_ACCOUNT = dbutils.widgets.get("storage_account")
+STORAGE_KEY     = dbutils.widgets.get("storage_key")
+
+spark.conf.set(
+    f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    STORAGE_KEY,
+)
+
 GOLD_PATH = f"abfss://gold@{STORAGE_ACCOUNT}.dfs.core.windows.net/churn_features"
 
 FEATURES = [
@@ -68,7 +81,10 @@ gb_run, gb_auc = train_and_log(
 
 # COMMAND ----------
 
-# MAGIC %md ## Register the winner and promote to Staging
+# MAGIC %md ## Register the winner and tag it for Staging
+# MAGIC Unity Catalog dropped model *stages* in favour of *aliases*
+# MAGIC (`transition_model_version_stage` raises `MlflowException` on UC). We set a
+# MAGIC `@staging` alias instead — load later with `models:/churn_classifier@staging`.
 
 # COMMAND ----------
 
@@ -78,5 +94,5 @@ mv = mlflow.register_model(f"runs:/{best_run}/model", MODEL_NAME)
 from mlflow.tracking import MlflowClient
 
 client = MlflowClient()
-client.transition_model_version_stage(MODEL_NAME, mv.version, stage="Staging")
-print(f"Registered {MODEL_NAME} v{mv.version} -> Staging (run {best_run})")
+client.set_registered_model_alias(MODEL_NAME, "staging", mv.version)
+print(f"Registered {MODEL_NAME} v{mv.version} with alias @staging (run {best_run})")

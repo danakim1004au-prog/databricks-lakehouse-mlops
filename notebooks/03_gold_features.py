@@ -8,11 +8,19 @@
 
 from pyspark.sql import functions as F
 
-dbutils.widgets.text("storage_account", "CHANGE_ME")
+dbutils.widgets.text("storage_account", "stdbxchurnamym3m")
+dbutils.widgets.text("storage_key", "PASTE_KEY_HERE")
+
 STORAGE_ACCOUNT = dbutils.widgets.get("storage_account")
+STORAGE_KEY     = dbutils.widgets.get("storage_key")
+
+spark.conf.set(
+    f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    STORAGE_KEY,
+)
 
 SILVER_PATH = f"abfss://silver@{STORAGE_ACCOUNT}.dfs.core.windows.net/telco_churn"
-GOLD_PATH = f"abfss://gold@{STORAGE_ACCOUNT}.dfs.core.windows.net/churn_features"
+GOLD_PATH   = f"abfss://gold@{STORAGE_ACCOUNT}.dfs.core.windows.net/churn_features"
 
 # COMMAND ----------
 
@@ -43,6 +51,5 @@ gold = (
 )
 
 gold.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(GOLD_PATH)
-spark.sql(f"CREATE TABLE IF NOT EXISTS gold_churn_features USING DELTA LOCATION '{GOLD_PATH}'")
 
 display(gold.groupBy("tenure_bucket").agg(F.avg("churn_label").alias("churn_rate"), F.count("*").alias("n")))

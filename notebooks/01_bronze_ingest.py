@@ -8,10 +8,18 @@
 
 from pyspark.sql import functions as F
 
-dbutils.widgets.text("storage_account", "CHANGE_ME")
-STORAGE_ACCOUNT = dbutils.widgets.get("storage_account")
+dbutils.widgets.text("storage_account", "stdbxchurnamym3m")
+dbutils.widgets.text("storage_key", "PASTE_KEY_HERE")
 
-RAW_PATH = f"abfss://raw@{STORAGE_ACCOUNT}.dfs.core.windows.net/telco_churn.csv"
+STORAGE_ACCOUNT = dbutils.widgets.get("storage_account")
+STORAGE_KEY     = dbutils.widgets.get("storage_key")
+
+spark.conf.set(
+    f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    STORAGE_KEY,
+)
+
+RAW_PATH    = f"abfss://raw@{STORAGE_ACCOUNT}.dfs.core.windows.net/telco_churn.csv"
 BRONZE_PATH = f"abfss://bronze@{STORAGE_ACCOUNT}.dfs.core.windows.net/telco_churn"
 
 # COMMAND ----------
@@ -38,5 +46,7 @@ bronze_df = (
 
 # COMMAND ----------
 
-spark.sql(f"CREATE TABLE IF NOT EXISTS bronze_telco_churn USING DELTA LOCATION '{BRONZE_PATH}'")
+# NOTE: On Unity Catalog clusters, registering an external table via
+# CREATE TABLE ... LOCATION 'abfss://...' requires a UC External Location.
+# This lab reads/writes Delta by path instead, which needs no UC grant.
 print(f"Bronze rows: {spark.read.format('delta').load(BRONZE_PATH).count():,}")

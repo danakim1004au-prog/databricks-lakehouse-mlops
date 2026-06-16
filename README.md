@@ -38,7 +38,7 @@ requested in 2026 data engineering / ML engineering job descriptions:
 | `notebooks/05_batch_inference.py` | Load registered model, score Gold table, write predictions |
 | `src/train_local.py` | Local sklearn mirror of notebook 04 — CI-friendly smoke test |
 | `tests/test_data_quality.py` | pytest data-quality checks on the generated dataset |
-| `docs/SCREENSHOT_CHECKLIST.md` | Evidence-capture checklist for the live lab run |
+| `docs/dbx-*.png` | Lab evidence screenshots from a real Azure run (see gallery below) |
 | `docs/COST_ESTIMATE.md` | Per-session cost breakdown |
 
 ## Quick start
@@ -60,13 +60,114 @@ python3 src/train_local.py
 ./infra/teardown.sh
 ```
 
+### Cluster requirements (learned the hard way)
+
+- **Access mode: Dedicated (single user)** — Shared/Serverless modes block runtime
+  `spark.conf.set("fs.azure.account.key...")` storage-key auth (`CONFIG_NOT_AVAILABLE`).
+- **Databricks Runtime ML** (e.g. 14.3 LTS ML) for notebooks 04–05 — bundles a
+  conflict-free mlflow + scikit-learn. Plain runtime + `%pip install` hits a
+  `typing_extensions`/`Sentinel` dependency clash.
+- On Unity Catalog clusters, tables are read/written **by Delta path**, not via
+  `CREATE TABLE ... LOCATION 'abfss://...'` (which needs a UC External Location).
+
 ## Why these choices (interview talking points)
 
 - **Delta over plain Parquet**: ACID merge for dedupe in Silver, time travel for audit,
   `OPTIMIZE`/`VACUUM` story for cost control.
-- **MLflow registry over ad-hoc pickle files**: model lineage, stage transitions
-  (None → Staging → Production), reproducible runs with logged params/metrics/artifacts.
+- **MLflow registry over ad-hoc pickle files**: model lineage, version aliases
+  (`@staging` / `@production` under Unity Catalog), reproducible runs with logged
+  params/metrics/artifacts.
 - **Single-node cluster**: at 10k rows a multi-node cluster is waste; demonstrates
   cost-awareness employers explicitly screen for.
 - **Local sklearn mirror (`src/train_local.py`)**: the same feature/label contract runs in CI
   without a Spark cluster — cheap regression safety net.
+
+## Lab evidence
+
+Screenshots from a real same-day Azure run (`australiaeast`), torn down immediately after capture.
+
+### Infrastructure (Azure Portal)
+
+| Resource group overview | Bicep deployment success | ADLS Gen2 medallion containers |
+|---|---|---|
+| ![Resource group overview](docs/dbx-01-rg-overview.png) | ![Bicep deployment success](docs/dbx-02-deployment-success.png) | ![ADLS Gen2 containers](docs/dbx-03-adls-containers.png) |
+
+### Pipeline (Databricks)
+
+| Single-node cluster config | Raw CSV uploaded to ADLS | Bronze ingest row count |
+|---|---|---|
+| ![Cluster configuration](docs/dbx-06-cluster-config.png) | ![Raw CSV upload](docs/dbx-07-raw-upload.png) | ![Bronze ingest result](docs/dbx-08-bronze-run.png) |
+
+| Silver data-quality gates passed | Gold churn rate by tenure | Delta Lake time-travel history |
+|---|---|---|
+| ![Silver DQ gates passed](docs/dbx-09-silver-dq-pass.png) | ![Gold churn rate](docs/dbx-10-gold-churn-rate.png) | ![Delta history](docs/dbx-11-delta-history.png) |
+
+### Model lifecycle (MLflow + Unity Catalog)
+
+| Experiment runs comparison | Best run detail | UC model registry (`@staging` alias) | Batch inference results |
+|---|---|---|---|
+| ![MLflow experiments](docs/dbx-12-mlflow-experiments.png) | ![MLflow run detail](docs/dbx-13-mlflow-run-detail.png) | ![Model registry](docs/dbx-14-model-registry.png) | ![Batch inference](docs/dbx-15-batch-inference.png) |
+
+## Error report (in order encountered)
+
+A running log of every failure hit while building and running this lab, with root cause and fix.
+Most of the runtime errors trace back to **Unity Catalog governance** and **cluster access mode** — the
+exact friction you meet on a real shared/governed Databricks workspace.
+
+### 1 — pandas 3.0 `TypeError: Invalid value ' ' for dtype 'float64'` (`generate_churn_data.py`)
+- **Symptom:** assigning the blank string `" "` into the float64 `TotalCharges` column during dirt injection.
+  Trace: `LossySetitemError` → `coerce_to_target_dtype(raise_on_upcast=True)` → `TypeError`.
+- **Cause:** local env is pandas 3.0.3. From pandas 3.x, a silent upcast (float→object) on dtype-mismatched
+  assignment is forbidden; pandas 2.x only warned and let it through.
+- **Fix:** cast first — `df["TotalCharges"] = df["TotalCharges"].astype(str)` before the assignment.
+
+### 2 — Notebook 01 widget-parameter logic bug (design flaw, fixed before run)
+- **Symptom:** the first draft of the storage-account parameter iterated an empty list in a meaningless
+  conditional, so it always fell back to `CHANGE_ME`.
+- **Fix:** replaced with the standard `dbutils.widgets.text()` + `dbutils.widgets.get()` pattern.
+  Notebooks 02–05 used the correct pattern from the start.
+
+### 3 — Wrong value passed as storage account (ABFS DNS failure)
+- **Symptom:** `Failed to resolve 'adb-...azuredatabricks.net.blob.core.windows.net'`.
+- **Cause:** the Databricks **workspace URL** was pasted where the **storage account name** was expected.
+- **Fix:** use the `storageAccountName` Bicep output (`stdbxchurn...`), confirmed via
+  `az storage account list -g rg-dbx-churn-lab-aue --query "[].name" -o tsv`.
+
+### 4 — `CONFIG_NOT_AVAILABLE` / `SparkConnectGrpcException` on `spark.conf.set(...account.key...)`
+- **Symptom:** `Configuration fs.azure.account.key.<acct>.dfs.core.windows.net is not available`.
+- **Cause:** the cluster was in **Standard (Shared)** / **Serverless** access mode, which blocks runtime
+  storage-key auth via `spark.conf.set`.
+- **Fix:** switch the cluster to **Dedicated (single user)** access mode.
+
+### 5 — `Invalid configuration value detected for fs.azure.account.key`
+- **Symptom:** `KeyProviderException ... Invalid configuration value` even after the access-mode fix.
+- **Cause:** the first argument to `spark.conf.set` was the bare account name, not the full config key.
+- **Fix:** use the full key name `fs.azure.account.key.<acct>.dfs.core.windows.net` on a single line
+  (a newline pasted into the cluster Spark config box produced the same error).
+
+### 6 — `NO_PARENT_EXTERNAL_LOCATION_FOR_PATH` on `CREATE TABLE ... LOCATION 'abfss://...'`
+- **Symptom:** `No parent external location was found for path 'abfss://bronze@...'`.
+- **Cause:** on a Unity Catalog cluster, registering an external table over an ABFS path requires a UC
+  External Location object (needs metastore-admin privileges not available on this workspace).
+- **Fix:** drop the `CREATE TABLE` statements and read/write Delta **by path** — no UC grant needed.
+
+### 7 — `ModuleNotFoundError: No module named 'mlflow'` (notebook 04)
+- **Cause:** the cluster used a plain Databricks Runtime, where mlflow is not pre-installed.
+- **Fix:** switch the cluster to **Databricks Runtime ML** (14.3 LTS ML).
+
+### 8 — `ImportError: cannot import name 'Sentinel' from 'typing_extensions'`
+- **Symptom:** appeared after `%pip install mlflow scikit-learn` on the plain runtime.
+- **Cause:** the freshly pip-installed mlflow required a newer `typing_extensions` than the runtime shipped —
+  a classic pip-on-DBR dependency clash.
+- **Fix:** stop layering pip installs on a plain runtime; use Databricks Runtime ML (deps pre-resolved).
+
+### 9 — `NameError: name 'FEATURES' is not defined` (notebook 04)
+- **Cause:** while simplifying the config cell, the `FEATURES` / `LABEL` / `MODEL_NAME` definitions were
+  accidentally dropped.
+- **Fix:** restore those definitions in the config cell.
+
+### 10 — `MlflowException: 'transition_model_version_stage' is unsupported for models in the Unity Catalog`
+- **Symptom:** model registration succeeded, but the stage-transition call failed.
+- **Cause:** Unity Catalog dropped model **stages** in favour of **aliases**.
+- **Fix:** `client.set_registered_model_alias(MODEL_NAME, "staging", mv.version)` and load with
+  `models:/churn_classifier@staging` (instead of `.../Staging`).

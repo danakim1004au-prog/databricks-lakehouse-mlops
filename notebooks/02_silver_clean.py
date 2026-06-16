@@ -8,8 +8,16 @@
 
 from pyspark.sql import functions as F
 
-dbutils.widgets.text("storage_account", "CHANGE_ME")
+dbutils.widgets.text("storage_account", "stdbxchurnamym3m")
+dbutils.widgets.text("storage_key", "PASTE_KEY_HERE")
+
 STORAGE_ACCOUNT = dbutils.widgets.get("storage_account")
+STORAGE_KEY     = dbutils.widgets.get("storage_key")
+
+spark.conf.set(
+    f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    STORAGE_KEY,
+)
 
 BRONZE_PATH = f"abfss://bronze@{STORAGE_ACCOUNT}.dfs.core.windows.net/telco_churn"
 SILVER_PATH = f"abfss://silver@{STORAGE_ACCOUNT}.dfs.core.windows.net/telco_churn"
@@ -56,5 +64,4 @@ bad_contract = silver.filter(~F.col("Contract").isin("Month-to-month", "One year
 assert bad_contract == 0, f"{bad_contract} unnormalised Contract values"
 
 silver.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(SILVER_PATH)
-spark.sql(f"CREATE TABLE IF NOT EXISTS silver_telco_churn USING DELTA LOCATION '{SILVER_PATH}'")
 print(f"Silver rows: {total:,} (all DQ gates passed)")
