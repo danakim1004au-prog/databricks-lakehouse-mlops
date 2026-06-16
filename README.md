@@ -119,8 +119,9 @@ Failures hit while building this lab, with root cause and fix.
   assignment is forbidden; pandas 2.x only warned and let it through.
 - **Fix:** cast first — `df["TotalCharges"] = df["TotalCharges"].astype(str)` before the assignment.
 
-### 2 — Notebook 01 widget-parameter logic bug (design flaw, fixed before run)
-- **Symptom:** the first draft of the storage-account parameter iterated an empty list in a meaningless
-  conditional, so it always fell back to `CHANGE_ME`.
-- **Fix:** replaced with the standard `dbutils.widgets.text()` + `dbutils.widgets.get()` pattern.
-  Notebooks 02–05 used the correct pattern from the start.
+### 2 — `MlflowException: 'transition_model_version_stage' is unsupported for models in the Unity Catalog`
+- **Symptom:** model registration succeeded, but the stage-transition call (`transition_model_version_stage`)
+  failed on the Unity Catalog model registry.
+- **Cause:** Unity Catalog dropped model **stages** (`None`/`Staging`/`Production`) in favour of **aliases**.
+- **Fix:** `client.set_registered_model_alias(MODEL_NAME, "staging", mv.version)` and load the model with
+  `models:/churn_classifier@staging` instead of `models:/churn_classifier/Staging`.
