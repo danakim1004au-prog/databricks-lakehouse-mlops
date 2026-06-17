@@ -13,14 +13,8 @@ requested in 2026 data engineering / ML engineering job descriptions:
 ## Architecture
 
 ```
-                       Azure Databricks (Premium)
-┌──────────┐   ┌────────────────────────────────────────────┐   ┌─────────────┐
-│ Synthetic │   │  Bronze        Silver         Gold         │   │   MLflow    │
-│ telco CSV ├──▶│  raw ingest ─▶ clean/dedupe ─▶ features ───┼──▶│ train/track │
-│ (ADLS g2) │   │  Delta         Delta + DQ     Delta        │   │  registry   │
-└──────────┘   └────────────────────────────────────────────┘   └──────┬──────┘
-                                                                       │
-                                                          batch inference ▶ Gold
+<img width="1774" height="887" alt="databricks-lakehouse-mlops-architecture" src="https://github.com/user-attachments/assets/9d6c1474-e236-47ef-bdae-d86924979409" />
+
 ```
 
 ## Repo layout
