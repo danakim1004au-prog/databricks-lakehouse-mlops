@@ -12,10 +12,8 @@ requested in 2026 data engineering / ML engineering job descriptions:
 
 ## Architecture
 
-```
+<img width="1774" height="887" alt="databricks-lakehouse-mlops-architecture" src="https://github.com/user-attachments/assets/ca8f0d03-c082-40d2-bc87-f415336b1711" />
 
-
-```
 
 ## Repo layout
 
