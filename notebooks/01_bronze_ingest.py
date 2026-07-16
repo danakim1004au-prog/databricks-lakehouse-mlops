@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # 01 — Bronze: raw CSV → Delta
 # MAGIC Schema-on-read ingest with lineage metadata. No business transformations are applied
-# MAGIC in Bronze; this Phase 1 lab rebuilds the batch copy on each run.
+# MAGIC in Bronze; the scheduled retraining job rebuilds this batch copy on each run.
 
 # COMMAND ----------
 

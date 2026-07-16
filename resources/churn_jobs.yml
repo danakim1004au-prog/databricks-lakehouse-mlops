@@ -1,0 +1,112 @@
+resources:
+  jobs:
+    churn_retraining:
+      name: churn-retraining
+      description: Weekly medallion rebuild, model comparison, registration, scoring and monitoring.
+      max_concurrent_runs: 1
+      timeout_seconds: 7200
+      schedule:
+        quartz_cron_expression: "0 0 3 ? * SUN *"
+        timezone_id: Australia/Sydney
+        pause_status: PAUSED
+      tags:
+        project: churn-lakehouse
+        workload: retraining
+        cost-centre: portfolio-lab
+      job_clusters:
+        - job_cluster_key: churn_ml
+          new_cluster: &single_node_ml_cluster
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type_id}
+            driver_node_type_id: ${var.node_type_id}
+            num_workers: 0
+            data_security_mode: DATA_SECURITY_MODE_DEDICATED
+            runtime_engine: STANDARD
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: local[*, 4]
+            custom_tags:
+              ResourceClass: SingleNode
+              Project: churn-lakehouse
+      tasks:
+        - task_key: bronze_ingest
+          job_cluster_key: churn_ml
+          notebook_task:
+            notebook_path: ../notebooks/01_bronze_ingest.py
+            base_parameters: &storage_parameters
+              storage_account: ${var.storage_account}
+              secret_scope: ${var.secret_scope}
+              secret_key: ${var.secret_key}
+        - task_key: silver_clean
+          depends_on:
+            - task_key: bronze_ingest
+          job_cluster_key: churn_ml
+          notebook_task:
+            notebook_path: ../notebooks/02_silver_clean.py
+            base_parameters: *storage_parameters
+        - task_key: gold_features
+          depends_on:
+            - task_key: silver_clean
+          job_cluster_key: churn_ml
+          notebook_task:
+            notebook_path: ../notebooks/03_gold_features.py
+            base_parameters: *storage_parameters
+        - task_key: train_and_register
+          depends_on:
+            - task_key: gold_features
+          job_cluster_key: churn_ml
+          notebook_task:
+            notebook_path: ../notebooks/04_train_mlflow.py
+            base_parameters: &model_parameters
+              <<: *storage_parameters
+              model_name: ${var.model_name}
+        - task_key: batch_inference
+          depends_on:
+            - task_key: train_and_register
+          job_cluster_key: churn_ml
+          notebook_task:
+            notebook_path: ../notebooks/05_batch_inference.py
+            base_parameters: *model_parameters
+        - task_key: monitor_model
+          depends_on:
+            - task_key: batch_inference
+          job_cluster_key: churn_ml
+          notebook_task:
+            notebook_path: ../notebooks/06_monitoring.py
+            base_parameters:
+              <<: *storage_parameters
+              min_accuracy: "0.70"
+              max_feature_shift: "1.0"
+
+    churn_batch_monitoring:
+      name: churn-batch-monitoring
+      description: Daily batch scoring and labelled-performance/data-shift checks.
+      max_concurrent_runs: 1
+      timeout_seconds: 3600
+      schedule:
+        quartz_cron_expression: "0 0 2 * * ?"
+        timezone_id: Australia/Sydney
+        pause_status: PAUSED
+      tags:
+        project: churn-lakehouse
+        workload: monitoring
+        cost-centre: portfolio-lab
+      job_clusters:
+        - job_cluster_key: churn_ml
+          new_cluster: *single_node_ml_cluster
+      tasks:
+        - task_key: batch_inference
+          job_cluster_key: churn_ml
+          notebook_task:
+            notebook_path: ../notebooks/05_batch_inference.py
+            base_parameters: *model_parameters
+        - task_key: monitor_model
+          depends_on:
+            - task_key: batch_inference
+          job_cluster_key: churn_ml
+          notebook_task:
+            notebook_path: ../notebooks/06_monitoring.py
+            base_parameters:
+              <<: *storage_parameters
+              min_accuracy: "0.70"
+              max_feature_shift: "1.0"

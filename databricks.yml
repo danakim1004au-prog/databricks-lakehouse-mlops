@@ -1,0 +1,47 @@
+bundle:
+  name: databricks-lakehouse-mlops
+
+include:
+  - resources/*.yml
+
+variables:
+  storage_account:
+    description: ADLS Gen2 account created by infra/deploy.sh
+  secret_scope:
+    description: Databricks secret scope containing the storage key
+    default: churn-lab
+  secret_key:
+    description: Secret key name within the scope
+    default: storage-account-key
+  model_name:
+    description: Fully qualified Unity Catalog model name (catalog.schema.model)
+  spark_version:
+    description: Azure Databricks Runtime ML version for job clusters
+    default: 14.3.x-cpu-ml-scala2.12
+  node_type_id:
+    description: Azure VM type used by the single-node job cluster
+    default: Standard_D4ds_v5
+
+targets:
+  dev:
+    default: true
+    mode: development
+    resources:
+      jobs:
+        churn_retraining:
+          schedule:
+            pause_status: PAUSED
+        churn_batch_monitoring:
+          schedule:
+            pause_status: PAUSED
+
+  prod:
+    mode: production
+    resources:
+      jobs:
+        churn_retraining:
+          schedule:
+            pause_status: UNPAUSED
+        churn_batch_monitoring:
+          schedule:
+            pause_status: UNPAUSED

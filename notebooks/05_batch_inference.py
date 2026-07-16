@@ -14,15 +14,19 @@ from pyspark.sql import functions as F
 dbutils.widgets.text("storage_account", "")
 dbutils.widgets.text("secret_scope", "churn-lab")
 dbutils.widgets.text("secret_key", "storage-account-key")
+dbutils.widgets.text("model_name", "churn_classifier")
 
 STORAGE_ACCOUNT = dbutils.widgets.get("storage_account").strip()
 SECRET_SCOPE    = dbutils.widgets.get("secret_scope").strip()
 SECRET_KEY_NAME = dbutils.widgets.get("secret_key").strip()
+MODEL_NAME      = dbutils.widgets.get("model_name").strip()
 
 if not STORAGE_ACCOUNT:
     raise ValueError("Set the storage_account widget to the account name printed by deploy.sh")
 if not SECRET_SCOPE or not SECRET_KEY_NAME:
     raise ValueError("Set secret_scope and secret_key before running the notebook")
+if not MODEL_NAME:
+    raise ValueError("Set model_name to the registered Unity Catalog model")
 
 STORAGE_KEY = dbutils.secrets.get(scope=SECRET_SCOPE, key=SECRET_KEY_NAME)
 
@@ -33,6 +37,8 @@ spark.conf.set(
 
 GOLD_PATH = f"abfss://gold@{STORAGE_ACCOUNT}.dfs.core.windows.net/churn_features"
 PRED_PATH = f"abfss://gold@{STORAGE_ACCOUNT}.dfs.core.windows.net/churn_predictions"
+
+mlflow.set_registry_uri("databricks-uc")
 
 FEATURES = [
     "SeniorCitizen", "tenure", "MonthlyCharges", "TotalCharges",
@@ -47,7 +53,7 @@ gold = spark.read.format("delta").load(GOLD_PATH)
 # Distribute the sklearn model across the cluster as a Spark UDF.
 # Unity Catalog uses an alias (@staging), not a stage (/Staging).
 predict_udf = mlflow.pyfunc.spark_udf(
-    spark, model_uri="models:/churn_classifier@staging", result_type="double"
+    spark, model_uri=f"models:/{MODEL_NAME}@staging", result_type="double"
 )
 
 predictions = (

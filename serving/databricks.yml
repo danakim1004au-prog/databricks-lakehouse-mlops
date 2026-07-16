@@ -1,0 +1,38 @@
+bundle:
+  name: churn-model-serving
+
+variables:
+  registered_model_name:
+    description: Fully qualified Unity Catalog model name (catalog.schema.model)
+  model_version:
+    description: Registered model version to serve
+  endpoint_name:
+    description: Name of the Databricks model serving endpoint
+    default: churn-classifier-endpoint
+
+resources:
+  model_serving_endpoints:
+    churn_classifier:
+      name: ${var.endpoint_name}
+      description: Scale-to-zero endpoint for the registered churn classifier.
+      config:
+        served_entities:
+          - entity_name: ${var.registered_model_name}
+            entity_version: ${var.model_version}
+            workload_size: Small
+            scale_to_zero_enabled: true
+      tags:
+        - key: project
+          value: churn-lakehouse
+        - key: cost-centre
+          value: portfolio-lab
+
+targets:
+  dev:
+    default: true
+    variables:
+      endpoint_name: churn-classifier-endpoint-dev
+
+  prod:
+    variables:
+      endpoint_name: churn-classifier-endpoint
