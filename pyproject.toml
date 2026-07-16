@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "databricks-lakehouse-mlops"
 version = "0.1.0"
-description = "A reproducible Azure Databricks and MLflow customer-churn lab"
+description = "Reproducible Azure Databricks lakehouse MLOps with Jobs, MLflow, and monitoring"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "PyYAML>=6,<7",
     "pytest>=8,<9",
     "ruff>=0.6,<1",
 ]
