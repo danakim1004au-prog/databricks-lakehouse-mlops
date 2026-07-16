@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 
 DATA = Path(__file__).parent.parent / "data" / "telco_churn.csv"
@@ -45,6 +45,11 @@ def gold_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def main() -> None:
+    if not DATA.exists():
+        raise FileNotFoundError(
+            f"Missing {DATA}. Run 'python data/generate_churn_data.py' first."
+        )
+
     gold = gold_features(silver_clean(pd.read_csv(DATA)))
     X_train, X_test, y_train, y_test = train_test_split(
         gold[FEATURES], gold["churn_label"],
@@ -60,7 +65,10 @@ def main() -> None:
         proba = model.predict_proba(X_test)[:, 1]
         auc = roc_auc_score(y_test, proba)
         f1 = f1_score(y_test, (proba >= 0.5).astype(int))
-        print(f"{name:18s} AUC={auc:.4f}  F1={f1:.4f}")
+        average_precision = average_precision_score(y_test, proba)
+        print(
+            f"{name:18s} AUC={auc:.4f}  AP={average_precision:.4f}  F1={f1:.4f}"
+        )
         assert auc > 0.70, f"{name} AUC below sanity floor"
 
     print("Local smoke test passed.")

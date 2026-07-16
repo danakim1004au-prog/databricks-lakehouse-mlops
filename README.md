@@ -1,119 +1,154 @@
 # Databricks Lakehouse MLOps — Customer Churn Prediction
 
-End-to-end **Azure Databricks + Azure ML** portfolio project implementing the patterns most
-requested in 2026 data engineering / ML engineering job descriptions:
+A small, reproducible **Azure Databricks + MLflow** lab for customer-churn prediction. It demonstrates a Delta Lake medallion pipeline, data-quality checks, model comparison, MLflow registration, and batch scoring on a cost-conscious single-node cluster.
 
-- **Medallion architecture** (Bronze → Silver → Gold) on **Delta Lake**
-- **PySpark** ETL with data-quality gates
-- **MLflow** experiment tracking, model registry, and batch inference
-- **Unity Catalog**-ready storage layout (ADLS Gen2 + Access Connector)
-- **Infrastructure as Code** (Bicep) with same-day deploy → capture → teardown workflow
-- Cost-conscious single-node cluster design (~AUD 5–10 per lab session)
+This is intentionally a Phase 1 portfolio lab. It uses path-based Delta tables and a Databricks secret scope so the run can be created and torn down in one session. Production hardening is out of scope for this version.
 
 ## Architecture
 
-<img width="1774" height="887" alt="databricks-lakehouse-mlops-architecture" src="https://github.com/user-attachments/assets/ca8f0d03-c082-40d2-bc87-f415336b1711" />
+```mermaid
+flowchart LR
+    raw["Synthetic telco CSV\nADLS raw container"] --> bronze["Bronze Delta\nrebuildable batch copy"]
+    bronze --> silver["Silver Delta\nclean + deduplicate + DQ gates"]
+    silver --> gold["Gold Delta\nML-ready features"]
+    gold --> train["MLflow\ntrain + compare + register"]
+    train --> score["Batch inference\nregistered @staging model"]
+    score --> predictions["Gold predictions\nDelta table"]
+```
 
-
-## Repo layout
+## Repository layout
 
 | Path | Purpose |
 |---|---|
-| `infra/main.bicep` | ADLS Gen2 + Databricks workspace (Premium) + UC Access Connector |
-| `infra/deploy.sh` | One-command deploy (resource group `rg-dbx-churn-lab-aue`) |
-| `infra/teardown.sh` | One-command full teardown |
-| `data/generate_churn_data.py` | Synthetic telco churn dataset generator (10,000 rows, seeded) |
-| `notebooks/01_bronze_ingest.py` | CSV → Bronze Delta (schema-on-read, ingest metadata columns) |
-| `notebooks/02_silver_clean.py` | Dedupe, type casting, null handling, DQ assertions |
-| `notebooks/03_gold_features.py` | Feature engineering (tenure buckets, spend ratios, encodings) |
-| `notebooks/04_train_mlflow.py` | Gradient boosting + logistic baseline, MLflow tracking + registry |
-| `notebooks/05_batch_inference.py` | Load registered model, score Gold table, write predictions |
-| `src/train_local.py` | Local sklearn mirror of notebook 04 — CI-friendly smoke test |
-| `tests/test_data_quality.py` | pytest data-quality checks on the generated dataset |
-| `docs/dbx-*.png` | Lab evidence screenshots from a real Azure run (see gallery below) |
-| `docs/COST_ESTIMATE.md` | Per-session cost breakdown |
+| `infra/main.bicep` | ADLS Gen2, Premium Databricks workspace, and Access Connector |
+| `infra/deploy.sh` | Deploy the disposable lab resource group |
+| `infra/teardown.sh` | Request full resource-group deletion |
+| `data/generate_churn_data.py` | Seeded synthetic telco dataset generator |
+| `notebooks/01_bronze_ingest.py` | CSV → Bronze Delta with ingest metadata |
+| `notebooks/02_silver_clean.py` | Dedupe, type casting, null handling, and DQ gates |
+| `notebooks/03_gold_features.py` | Feature engineering for training and scoring |
+| `notebooks/04_train_mlflow.py` | Logistic baseline vs gradient boosting with MLflow |
+| `notebooks/05_batch_inference.py` | Load the `@staging` model and write predictions |
+| `src/train_local.py` | Spark-free local mirror used by CI |
+| `tests/test_data_quality.py` | Data-quality and feature-contract tests |
+| `docs/images/*.png` | Evidence screenshots from a real Azure Databricks run |
+| `docs/COST_ESTIMATE.md` | Transparent session-cost assumptions |
+| `pyproject.toml` | Local and CI dependency definitions |
+| `.github/workflows/ci.yml` | Python tests, lint, and Bicep compilation |
+| `SECURITY.md` | Secret-handling and credential-rotation notes |
 
-## Quick start
+## Quick start (local checks)
+
+Python 3.10 or newer is required. The following commands do not use Azure:
 
 ```bash
-# 1. Generate the dataset locally
-python3 data/generate_churn_data.py            # writes data/telco_churn.csv
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
 
-# 2. Run the local training smoke test (no Azure required)
-python3 src/train_local.py
-
-# 3. Deploy Azure resources
-./infra/deploy.sh
-
-# 4. In the Databricks workspace: upload data/telco_churn.csv to the raw container,
-#    import notebooks/, attach a single-node cluster, run 01 → 05 in order.
-
-# 5. Tear down everything
-./infra/teardown.sh
+python data/generate_churn_data.py
+python -m pytest
+python src/train_local.py
+ruff check .
 ```
 
-### Cluster requirements (learned the hard way)
+The generator is seeded, so the data-quality tests can also create an in-memory dataset when the CSV has not been generated yet.
 
-- **Access mode: Dedicated (single user)** — Shared/Serverless modes block runtime
-  `spark.conf.set("fs.azure.account.key...")` storage-key auth (`CONFIG_NOT_AVAILABLE`).
-- **Databricks Runtime ML** (e.g. 14.3 LTS ML) for notebooks 04–05 — bundles a
-  conflict-free mlflow + scikit-learn. Plain runtime + `%pip install` hits a
-  `typing_extensions`/`Sentinel` dependency clash.
-- On Unity Catalog clusters, tables are read/written **by Delta path**, not via
-  `CREATE TABLE ... LOCATION 'abfss://...'` (which needs a UC External Location).
+## Azure lab run
 
-## Why these choices (interview talking points)
+### 1. Deploy
 
-- **Delta over plain Parquet**: ACID merge for dedupe in Silver, time travel for audit,
-  `OPTIMIZE`/`VACUUM` story for cost control.
-- **MLflow registry over ad-hoc pickle files**: model lineage, version aliases
-  (`@staging` / `@production` under Unity Catalog), reproducible runs with logged
-  params/metrics/artifacts.
-- **Single-node cluster**: at 10k rows a multi-node cluster is waste; demonstrates
-  cost-awareness employers explicitly screen for.
-- **Local sklearn mirror (`src/train_local.py`)**: the same feature/label contract runs in CI
-  without a Spark cluster — cheap regression safety net.
+```bash
+az login
+./infra/deploy.sh                 # defaults to australiaeast
+./infra/deploy.sh eastus          # optional alternative region
+```
+
+The script prints the storage account and workspace URL. The default resource group is `rg-dbx-churn-lab-aue`; override it with `RG=...` if required.
+
+### 2. Upload the raw CSV
+
+```bash
+az storage blob upload \
+  --account-name <storage-account-from-deploy> \
+  --container-name raw \
+  --file data/telco_churn.csv \
+  --name telco_churn.csv \
+  --auth-mode login
+```
+
+If this returns an authorization error, grant your signed-in identity **Storage Blob Data Contributor** on the storage account (or upload through the Azure Portal). Do not put the account key in the upload command or in shell history.
+
+### 3. Store the storage key in a Databricks secret scope
+
+The notebooks do not accept a plaintext key. Configure the Databricks CLI for the workspace URL printed by deployment, then create a scope or use the workspace UI. If the scope already exists, skip the first command.
+
+```bash
+databricks configure --host <workspace-url-from-deploy>
+databricks secrets create-scope churn-lab
+STORAGE_KEY="$(az storage account keys list \
+  --resource-group rg-dbx-churn-lab-aue \
+  --account-name <storage-account-from-deploy> \
+  --query "[0].value" --output tsv)"
+databricks secrets put-secret churn-lab storage-account-key --string-value "$STORAGE_KEY"
+unset STORAGE_KEY
+```
+
+Do not pipe the key directly into `put-secret`; some CLI versions preserve a trailing newline in the secret value, which makes the ABFS driver reject the key. Do not commit the value or place it in a notebook cell.
+
+### 4. Run the notebooks
+
+In the workspace, import `notebooks/`, attach a **Dedicated single-user Databricks Runtime ML** cluster (for example, 14.3 LTS ML), and run notebooks `01` through `05` in order. In each notebook, set these widgets before running the first command:
+
+| Widget | Value |
+|---|---|
+| `storage_account` | Storage account name printed by deployment |
+| `secret_scope` | `churn-lab` |
+| `secret_key` | `storage-account-key` |
+
+The storage-key path is retained for this disposable Phase 1 lab. The Delta data is accessed by path rather than registered as Unity Catalog tables; this avoids requiring an external location during the lab.
+
+### 5. Tear down
+
+```bash
+./infra/teardown.sh
+az group exists --name rg-dbx-churn-lab-aue
+```
+
+The deletion is requested asynchronously. The final command should return `false` after Azure finishes deleting the resource group.
+
+## Runtime notes
+
+- Use **Dedicated (single user)** access mode. Shared and serverless modes do not support the storage-key Spark configuration used by this lab.
+- Use a **Databricks Runtime ML** cluster for notebooks 04–05. It provides compatible MLflow and scikit-learn versions without ad-hoc `%pip` dependency conflicts.
+- Set a 30-minute auto-termination limit and use a single node. This dataset has 10,000 source rows and does not need a multi-node cluster.
+
+## Design decisions and trade-offs
+
+- Delta is used instead of plain Parquet for ACID writes, schema management, and time-travel evidence.
+- Silver performs explicit data-quality gates before Gold is written. The local mirror keeps the feature/label contract testable without a Spark cluster.
+- The model registry uses a Unity Catalog alias (`@staging`) rather than the retired model-version stages.
+- Bronze is a rebuildable batch copy in this version. Incremental ingestion and production orchestration are deliberately not part of this Phase 1 lab.
 
 ## Lab evidence
 
-Screenshots from a real same-day Azure run (`australiaeast`), torn down immediately after capture.
+These screenshots were captured during a same-day Azure Databricks run in `australiaeast`. They show the minimum proof path: cluster setup, Bronze ingestion, Gold features, MLflow training, model registry aliasing, and batch inference.
 
-### Infrastructure (Azure Portal)
-
-| Resource group overview | Bicep deployment success | ADLS Gen2 medallion containers |
+| Compute | Bronze Delta | Gold features |
 |---|---|---|
-| ![Resource group overview](docs/dbx-01-rg-overview.png) | ![Bicep deployment success](docs/dbx-02-deployment-success.png) | ![ADLS Gen2 containers](docs/dbx-03-adls-containers.png) |
+| ![Databricks Runtime ML single-node cluster](docs/images/01-cluster-running.png) | ![Bronze Delta ingest output](docs/images/02-bronze-delta-output.png) | ![Gold feature table output](docs/images/03-gold-features-output.png) |
 
-### Pipeline (Databricks)
-
-| Single-node cluster config | Raw CSV uploaded to ADLS | Bronze ingest row count |
+| MLflow training | Model registry | Batch inference |
 |---|---|---|
-| ![Cluster configuration](docs/dbx-06-cluster-config.png) | ![Raw CSV upload](docs/dbx-07-raw-upload.png) | ![Bronze ingest result](docs/dbx-08-bronze-run.png) |
+| ![MLflow model metrics and registration output](docs/images/04-mlflow-metrics.png) | ![MLflow registered model with staging alias](docs/images/05-model-registry-staging.png) | ![Batch inference prediction output](docs/images/06-batch-inference-output.png) |
 
-| Silver data-quality gates passed | Gold churn rate by tenure | Delta Lake time-travel history |
-|---|---|---|
-| ![Silver DQ gates passed](docs/dbx-09-silver-dq-pass.png) | ![Gold churn rate](docs/dbx-10-gold-churn-rate.png) | ![Delta history](docs/dbx-11-delta-history.png) |
+## Implementation notes
 
-### Model lifecycle (MLflow + Unity Catalog)
+### pandas 3.0 dtype assignment
 
-| Experiment runs comparison | Best run detail | UC model registry (`@staging` alias) | Batch inference results |
-|---|---|---|---|
-| ![MLflow experiments](docs/dbx-12-mlflow-experiments.png) | ![MLflow run detail](docs/dbx-13-mlflow-run-detail.png) | ![Model registry](docs/dbx-14-model-registry.png) | ![Batch inference](docs/dbx-15-batch-inference.png) |
+The generator casts `TotalCharges` to string before inserting blank values. pandas 3.x rejects assigning a string into a float column, while older versions only warned about the upcast.
 
-## Error report (in order encountered)
+### Unity Catalog model aliases
 
-Failures hit while building this lab, with root cause and fix.
-
-### 1 — pandas 3.0 `TypeError: Invalid value ' ' for dtype 'float64'` (`generate_churn_data.py`)
-- **Symptom:** assigning the blank string `" "` into the float64 `TotalCharges` column during dirt injection.
-  Trace: `LossySetitemError` → `coerce_to_target_dtype(raise_on_upcast=True)` → `TypeError`.
-- **Cause:** local env is pandas 3.0.3. From pandas 3.x, a silent upcast (float→object) on dtype-mismatched
-  assignment is forbidden; pandas 2.x only warned and let it through.
-- **Fix:** cast first — `df["TotalCharges"] = df["TotalCharges"].astype(str)` before the assignment.
-
-### 2 — `MlflowException: 'transition_model_version_stage' is unsupported for models in the Unity Catalog`
-- **Symptom:** model registration succeeded, but the stage-transition call (`transition_model_version_stage`)
-  failed on the Unity Catalog model registry.
-- **Cause:** Unity Catalog dropped model **stages** (`None`/`Staging`/`Production`) in favour of **aliases**.
-- **Fix:** `client.set_registered_model_alias(MODEL_NAME, "staging", mv.version)` and load the model with
-  `models:/churn_classifier@staging` instead of `models:/churn_classifier/Staging`.
+Unity Catalog does not support the old `transition_model_version_stage` flow. The training notebook registers the winner and assigns the `staging` alias; batch inference loads `models:/churn_classifier@staging`.

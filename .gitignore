@@ -6,6 +6,12 @@ docs/SCREENSHOT_CHECKLIST.md
 
 __pycache__/
 *.pyc
+*.egg-info/
 .pytest_cache/
+.ruff_cache/
+.venv/
+.coverage
+*.env
+*.pem
 .DS_Store
 mlruns/

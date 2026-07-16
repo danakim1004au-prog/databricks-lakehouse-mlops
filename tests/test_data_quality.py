@@ -3,32 +3,34 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "data"))
 
+from generate_churn_data import generate_dataset  # noqa: E402
 from train_local import gold_features, silver_clean  # noqa: E402
 
-DATA = ROOT / "data" / "telco_churn.csv"
-
-
-@pytest.fixture(scope="module")
 def raw() -> pd.DataFrame:
-    if not DATA.exists():
-        pytest.skip("run data/generate_churn_data.py first")
-    return pd.read_csv(DATA)
+    """Build test input in memory so missing generated files cannot hide failures."""
+    return generate_dataset()
 
 
-def test_raw_contains_injected_dirt(raw):
+def test_generator_is_deterministic():
+    pd.testing.assert_frame_equal(generate_dataset(), generate_dataset())
+    assert len(generate_dataset(n_rows=100)) == 101
+
+
+def test_raw_contains_injected_dirt():
+    raw_df = raw()
     # The generator must produce the messiness Silver claims to fix
-    assert raw["customerID"].duplicated().any(), "expected duplicate rows"
-    assert raw["Contract"].str.isupper().any(), "expected mixed-case contracts"
-    assert (raw["TotalCharges"].astype(str).str.strip() == "").any(), "expected blank TotalCharges"
+    assert raw_df["customerID"].duplicated().any(), "expected duplicate rows"
+    assert raw_df["Contract"].str.isupper().any(), "expected mixed-case contracts"
+    assert (raw_df["TotalCharges"].astype(str).str.strip() == "").any(), "expected blank TotalCharges"
 
 
-def test_silver_gates(raw):
-    silver = silver_clean(raw)
+def test_silver_gates():
+    silver = silver_clean(raw())
     assert len(silver) > 9_000
     assert silver["customerID"].is_unique
     assert silver["TotalCharges"].notna().all()
@@ -36,8 +38,8 @@ def test_silver_gates(raw):
     assert set(silver["churn_label"].unique()) <= {0, 1}
 
 
-def test_gold_feature_contract(raw):
-    gold = gold_features(silver_clean(raw))
+def test_gold_feature_contract():
+    gold = gold_features(silver_clean(raw()))
     assert gold.notna().all().all(), "Gold must contain no nulls"
     binary_cols = ["is_month_to_month", "is_fiber", "is_echeck", "has_tech_support", "is_paperless"]
     for c in binary_cols:

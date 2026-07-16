@@ -1,8 +1,8 @@
-"""Generate a seeded synthetic telco churn dataset (10,000 rows).
+"""Generate a seeded synthetic telco churn dataset.
 
 Mimics the well-known Telco Customer Churn schema so the medallion pipeline
 exercises realistic messiness: duplicate rows, blank TotalCharges for new
-customers, and mixed-case categoricals — exactly what Silver must clean up.
+customers, and mixed-case categoricals for Silver to clean up.
 """
 from pathlib import Path
 
@@ -14,23 +14,27 @@ N_ROWS = 10_000
 OUT = Path(__file__).parent / "telco_churn.csv"
 
 
-def main() -> None:
-    rng = np.random.default_rng(SEED)
+def generate_dataset(n_rows: int = N_ROWS, seed: int = SEED) -> pd.DataFrame:
+    """Return a deterministic synthetic dataset without writing to disk."""
+    if n_rows < 100:
+        raise ValueError("n_rows must be at least 100 so the duplicate sample is meaningful")
 
-    tenure = rng.integers(0, 73, N_ROWS)
-    monthly = np.round(rng.uniform(18.0, 120.0, N_ROWS), 2)
+    rng = np.random.default_rng(seed)
+
+    tenure = rng.integers(0, 73, n_rows)
+    monthly = np.round(rng.uniform(18.0, 120.0, n_rows), 2)
     contract = rng.choice(
-        ["Month-to-month", "One year", "Two year"], N_ROWS, p=[0.55, 0.21, 0.24]
+        ["Month-to-month", "One year", "Two year"], n_rows, p=[0.55, 0.21, 0.24]
     )
-    internet = rng.choice(["DSL", "Fiber optic", "No"], N_ROWS, p=[0.34, 0.44, 0.22])
+    internet = rng.choice(["DSL", "Fiber optic", "No"], n_rows, p=[0.34, 0.44, 0.22])
     payment = rng.choice(
         ["Electronic check", "Mailed check", "Bank transfer", "Credit card"],
-        N_ROWS,
+        n_rows,
         p=[0.34, 0.23, 0.22, 0.21],
     )
-    support = rng.choice(["Yes", "No"], N_ROWS, p=[0.29, 0.71])
-    paperless = rng.choice(["Yes", "No"], N_ROWS, p=[0.59, 0.41])
-    senior = rng.choice([0, 1], N_ROWS, p=[0.84, 0.16])
+    support = rng.choice(["Yes", "No"], n_rows, p=[0.29, 0.71])
+    paperless = rng.choice(["Yes", "No"], n_rows, p=[0.59, 0.41])
+    senior = rng.choice([0, 1], n_rows, p=[0.84, 0.16])
 
     # Churn probability driven by known telco signals
     logit = (
@@ -45,11 +49,11 @@ def main() -> None:
         + 0.35 * senior
     )
     churn_prob = 1.0 / (1.0 + np.exp(-logit))
-    churn = (rng.uniform(0, 1, N_ROWS) < churn_prob).astype(int)
+    churn = (rng.uniform(0, 1, n_rows) < churn_prob).astype(int)
 
     df = pd.DataFrame(
         {
-            "customerID": [f"C{100000 + i}" for i in range(N_ROWS)],
+            "customerID": [f"C{100000 + i}" for i in range(n_rows)],
             "SeniorCitizen": senior,
             "tenure": tenure,
             "Contract": contract,
@@ -58,8 +62,9 @@ def main() -> None:
             "TechSupport": support,
             "PaperlessBilling": paperless,
             "MonthlyCharges": monthly,
-            "TotalCharges": np.round(monthly * np.maximum(tenure, 0)
-                                     + rng.normal(0, 12, N_ROWS), 2),
+            "TotalCharges": np.round(
+                monthly * np.maximum(tenure, 0) + rng.normal(0, 12, n_rows), 2
+            ),
             "Churn": np.where(churn == 1, "Yes", "No"),
         }
     )
@@ -70,13 +75,17 @@ def main() -> None:
     df["TotalCharges"] = df["TotalCharges"].astype(str)
     df.loc[df["tenure"] == 0, "TotalCharges"] = " "
     # 2) ~1% exact duplicate rows
-    dupes = df.sample(n=N_ROWS // 100, random_state=SEED)
+    dupes = df.sample(n=n_rows // 100, random_state=seed)
     df = pd.concat([df, dupes], ignore_index=True)
     # 3) mixed-case contract values in ~2% of rows
-    idx = df.sample(frac=0.02, random_state=SEED).index
+    idx = df.sample(frac=0.02, random_state=seed).index
     df.loc[idx, "Contract"] = df.loc[idx, "Contract"].str.upper()
 
-    df = df.sample(frac=1.0, random_state=SEED).reset_index(drop=True)
+    return df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+
+
+def main() -> None:
+    df = generate_dataset()
     df.to_csv(OUT, index=False)
     print(f"Wrote {len(df):,} rows ({df['Churn'].eq('Yes').mean():.1%} churn) -> {OUT}")
 

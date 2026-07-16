@@ -1,7 +1,7 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # 05 — Batch inference from the model registry
-# MAGIC Loads the Staging model, scores the Gold feature table, writes a predictions
+# MAGIC Loads the `@staging` model, scores the Gold feature table, and writes a prediction
 # MAGIC Delta table — the standard nightly-scoring pattern.
 # MAGIC
 # MAGIC **Requires a Databricks Runtime ML cluster** (same as notebook 04).
@@ -11,11 +11,20 @@
 import mlflow
 from pyspark.sql import functions as F
 
-dbutils.widgets.text("storage_account", "stdbxchurnamym3m")
-dbutils.widgets.text("storage_key", "PASTE_KEY_HERE")
+dbutils.widgets.text("storage_account", "")
+dbutils.widgets.text("secret_scope", "churn-lab")
+dbutils.widgets.text("secret_key", "storage-account-key")
 
-STORAGE_ACCOUNT = dbutils.widgets.get("storage_account")
-STORAGE_KEY     = dbutils.widgets.get("storage_key")
+STORAGE_ACCOUNT = dbutils.widgets.get("storage_account").strip()
+SECRET_SCOPE    = dbutils.widgets.get("secret_scope").strip()
+SECRET_KEY_NAME = dbutils.widgets.get("secret_key").strip()
+
+if not STORAGE_ACCOUNT:
+    raise ValueError("Set the storage_account widget to the account name printed by deploy.sh")
+if not SECRET_SCOPE or not SECRET_KEY_NAME:
+    raise ValueError("Set secret_scope and secret_key before running the notebook")
+
+STORAGE_KEY = dbutils.secrets.get(scope=SECRET_SCOPE, key=SECRET_KEY_NAME)
 
 spark.conf.set(
     f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net",

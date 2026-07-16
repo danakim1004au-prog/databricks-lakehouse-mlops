@@ -22,6 +22,7 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   properties: {
     isHnsEnabled: true                  // required for ADLS Gen2 / Unity Catalog
     minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
     allowBlobPublicAccess: false
   }
 }
