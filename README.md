@@ -6,14 +6,21 @@ This is intentionally a Phase 1 portfolio lab. It uses path-based Delta tables a
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    raw["Synthetic telco CSV\nADLS raw container"] --> bronze["Bronze Delta\nrebuildable batch copy"]
-    bronze --> silver["Silver Delta\nclean + deduplicate + DQ gates"]
-    silver --> gold["Gold Delta\nML-ready features"]
-    gold --> train["MLflow\ntrain + compare + register"]
-    train --> score["Batch inference\nregistered @staging model"]
-    score --> predictions["Gold predictions\nDelta table"]
+```text
+Synthetic telco CSV
+  -> ADLS Gen2 raw container
+  -> Bronze Delta
+       Raw CSV loaded as strings with ingest metadata
+  -> Silver Delta
+       Deduplicated, typed, null-checked, and quality-gated
+  -> Gold Delta
+       ML-ready churn features and labels
+  -> MLflow training
+       Logistic baseline vs gradient boosting, metrics and artefacts logged
+  -> Unity Catalog model registry
+       Winning model registered as churn_classifier@staging
+  -> Batch inference
+       Gold features scored and predictions written back to Delta
 ```
 
 ## Repository layout
