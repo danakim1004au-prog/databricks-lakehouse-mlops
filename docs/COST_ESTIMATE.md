@@ -5,13 +5,13 @@ Assumption: one lab session uses a single-node cluster for roughly three hours a
 | Item | Unit price (approx) | Usage | Cost |
 |---|---|---|---|
 | Databricks workspace (Premium) | No separate workspace line item in this estimate | — | AUD 0 |
-| DBU (All-Purpose Compute, Premium) | ~USD 0.55/DBU | DS3_v2 single node = 0.75 DBU/h × 3h | ~USD 1.24 |
-| VM (Standard_DS3_v2, 4 vCPU 14GB) | ~AUD 0.42/h | 3h × 1 node | ~AUD 1.26 |
+| DBU (All-Purpose Compute, Premium) | ~USD 0.55/DBU | D4ds_v5 single node = 1 DBU/h × 3h | ~USD 1.65 |
+| VM (Standard_D4ds_v5, 4 vCPU 16GB) | Check the current Azure calculator | 3h × 1 node | subscription-dependent |
 | ADLS Gen2 (Standard LRS) | ~AUD 0.03/GB/month | <1GB, 1 day | ~AUD 0.01 |
 | Access Connector | no separate service charge in this estimate | — | AUD 0 |
 | Transactions / egress | negligible | — | <AUD 0.10 |
 
-**Estimated total: ~AUD 3.5–5 per session (approximately USD 2.5–3.5 at the exchange rate used for this estimate).**
+**Working budget: AUD 5–10 per interactive session.** This deliberately leaves room for cluster start-up time, regional VM differences, transactions, and exchange-rate movement.
 
 Credits or a free trial can reduce the billed amount, but they do not make the underlying compute free. Confirm the actual estimate in the Azure and Databricks billing portals before running a long session.
 
@@ -23,6 +23,8 @@ Credits or a free trial can reduce the billed amount, but they do not make the u
    fails and leaves it behind, a NAT GW / IP inside it can keep billing.
    After teardown, check with `az group list --query "[?contains(name,'dbx-churn')]"`.
 4. **Premium SKU DBU rate** — typically higher than Standard. This lab keeps Premium for the workspace configuration and Unity Catalog-compatible runtime; keep sessions short.
+5. **Unpaused production schedules** — the bundle's `dev` target pauses both jobs. The `prod` target enables daily scoring/monitoring and weekly retraining, so it creates recurring job-cluster spend.
+6. **Model Serving** — the optional serving bundle is not included in the session estimate. It uses a Small scale-to-zero endpoint, but active requests and endpoint build/warm-up time are billed separately.
 
 ## To save more
 
