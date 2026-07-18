@@ -8,6 +8,9 @@ param suffix string = toLower(substring(uniqueString(resourceGroup().id), 0, 6))
 @description('Azure region for all resources.')
 param location string = resourceGroup().location
 
+@description('Allow public network access for the disposable lab. Set false only after private networking is configured.')
+param allowPublicNetwork bool = true
+
 var storageName = 'stdbxchurn${suffix}'           // ADLS Gen2, max 24 chars
 var databricksName = 'dbw-churn-lab-${suffix}'
 var accessConnectorName = 'dbac-churn-lab-${suffix}'
@@ -24,6 +27,9 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     minimumTlsVersion: 'TLS1_2'
     supportsHttpsTrafficOnly: true
     allowBlobPublicAccess: false
+    allowSharedKeyAccess: false
+    defaultToOAuthAuthentication: true
+    publicNetworkAccess: allowPublicNetwork ? 'Enabled' : 'Disabled'
   }
 }
 
@@ -77,3 +83,5 @@ resource lakeRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 output storageAccountName string = storage.name
 output databricksWorkspaceUrl string = databricks.properties.workspaceUrl
 output accessConnectorId string = accessConnector.id
+output storageDfsEndpoint string = storage.properties.primaryEndpoints.dfs
+output databricksWorkspaceResourceId string = databricks.id

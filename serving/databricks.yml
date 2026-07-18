@@ -9,6 +9,9 @@ variables:
   endpoint_name:
     description: Name of the Databricks model serving endpoint
     default: churn-classifier-endpoint
+  environment:
+    description: Deployment environment tag
+    default: dev
 
 resources:
   model_serving_endpoints:
@@ -26,13 +29,17 @@ resources:
           value: churn-lakehouse
         - key: cost-centre
           value: portfolio-lab
+        - key: environment
+          value: ${var.environment}
 
 targets:
   dev:
     default: true
     variables:
       endpoint_name: churn-classifier-endpoint-dev
+      environment: dev
 
   prod:
     variables:
       endpoint_name: churn-classifier-endpoint
+      environment: prod

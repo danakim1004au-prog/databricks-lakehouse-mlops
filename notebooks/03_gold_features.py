@@ -1,64 +1,58 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 03 — Gold: ML-ready feature table
-# MAGIC Business-level feature engineering. Output is the single source of truth for
-# MAGIC training (notebook 04) and batch inference (notebook 05).
+# MAGIC # 03 — Gold: versioned model feature batch
+# MAGIC Feature engineering is shared with CI and output remains isolated by environment and batch.
 
 # COMMAND ----------
+
+import re
+import sys
+from pathlib import Path
 
 from pyspark.sql import functions as F
 
-dbutils.widgets.text("storage_account", "")
-dbutils.widgets.text("secret_scope", "churn-lab")
-dbutils.widgets.text("secret_key", "storage-account-key")
+src_path = str((Path.cwd().parent / "src").resolve())
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
 
-STORAGE_ACCOUNT = dbutils.widgets.get("storage_account").strip()
-SECRET_SCOPE    = dbutils.widgets.get("secret_scope").strip()
-SECRET_KEY_NAME = dbutils.widgets.get("secret_key").strip()
+from databricks_lakehouse_mlops.spark_transforms import gold_features_spark
 
-if not STORAGE_ACCOUNT:
-    raise ValueError("Set the storage_account widget to the account name printed by deploy.sh")
-if not SECRET_SCOPE or not SECRET_KEY_NAME:
-    raise ValueError("Set secret_scope and secret_key before running the notebook")
+dbutils.widgets.text("catalog", "")
+dbutils.widgets.text("schema", "")
+dbutils.widgets.text("environment", "dev")
+dbutils.widgets.text("batch_id", "")
 
-STORAGE_KEY = dbutils.secrets.get(scope=SECRET_SCOPE, key=SECRET_KEY_NAME)
+CATALOG = dbutils.widgets.get("catalog").strip()
+SCHEMA = dbutils.widgets.get("schema").strip()
+ENVIRONMENT = dbutils.widgets.get("environment").strip()
+BATCH_ID = dbutils.widgets.get("batch_id").strip()
 
-spark.conf.set(
-    f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net",
-    STORAGE_KEY,
-)
+if not CATALOG or not SCHEMA or not BATCH_ID:
+    raise ValueError("Set catalog, schema, and batch_id")
+if not re.fullmatch(r"[A-Za-z0-9_.-]+", BATCH_ID):
+    raise ValueError("Invalid batch_id")
 
-SILVER_PATH = f"abfss://silver@{STORAGE_ACCOUNT}.dfs.core.windows.net/telco_churn"
-GOLD_PATH   = f"abfss://gold@{STORAGE_ACCOUNT}.dfs.core.windows.net/churn_features"
+VOLUME_ROOT = f"/Volumes/{CATALOG}/{SCHEMA}"
+SILVER_BATCH_PATH = f"{VOLUME_ROOT}/silver/{ENVIRONMENT}/batches/{BATCH_ID}"
+GOLD_BATCH_PATH = f"{VOLUME_ROOT}/gold/{ENVIRONMENT}/features/batches/{BATCH_ID}"
 
 # COMMAND ----------
 
-silver = spark.read.format("delta").load(SILVER_PATH)
+silver = spark.read.format("delta").load(SILVER_BATCH_PATH)
+gold = gold_features_spark(silver)
+rows = gold.count()
+if rows == 0:
+    raise ValueError("Gold transform returned no rows")
 
-gold = (
-    silver
-    .withColumn(
-        "tenure_bucket",
-        F.when(F.col("tenure") <= 6, "0-6m")
-         .when(F.col("tenure") <= 24, "7-24m")
-         .when(F.col("tenure") <= 48, "25-48m")
-         .otherwise("49m+"),
-    )
-    .withColumn("avg_monthly_spend", F.round(F.col("TotalCharges") / F.greatest(F.col("tenure"), F.lit(1)), 2))
-    .withColumn("spend_delta", F.round(F.col("MonthlyCharges") - F.col("avg_monthly_spend"), 2))
-    .withColumn("is_month_to_month", (F.col("Contract") == "Month-to-month").cast("int"))
-    .withColumn("is_fiber", (F.col("InternetService") == "Fiber optic").cast("int"))
-    .withColumn("is_echeck", (F.col("PaymentMethod") == "Electronic check").cast("int"))
-    .withColumn("has_tech_support", (F.col("TechSupport") == "Yes").cast("int"))
-    .withColumn("is_paperless", (F.col("PaperlessBilling") == "Yes").cast("int"))
-    .select(
-        "customerID", "SeniorCitizen", "tenure", "tenure_bucket",
-        "MonthlyCharges", "TotalCharges", "avg_monthly_spend", "spend_delta",
-        "is_month_to_month", "is_fiber", "is_echeck", "has_tech_support",
-        "is_paperless", "churn_label",
+(
+    gold.write.format("delta")
+    .mode("overwrite")
+    .option("overwriteSchema", "true")
+    .save(GOLD_BATCH_PATH)
+)
+dbutils.jobs.taskValues.set(key="gold_rows", value=rows)
+display(
+    gold.groupBy("tenure_bucket").agg(
+        F.avg("churn_label").alias("churn_rate"), F.count("*").alias("n")
     )
 )
-
-gold.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(GOLD_PATH)
-
-display(gold.groupBy("tenure_bucket").agg(F.avg("churn_label").alias("churn_rate"), F.count("*").alias("n")))

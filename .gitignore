@@ -1,9 +1,8 @@
 # generated dataset — reproduce with data/generate_churn_data.py (seeded)
-data/telco_churn.csv
+data/telco_churn*.csv
 
 # personal lab notes (not for public repo)
 docs/SCREENSHOT_CHECKLIST.md
-docs/databricks-lakehouse-mlops-architecture.png
 
 __pycache__/
 *.pyc
@@ -15,5 +14,10 @@ __pycache__/
 .coverage
 *.env
 *.pem
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
+.terraform/
 .DS_Store
 mlruns/

@@ -16,12 +16,12 @@ az account show --output none >/dev/null 2>&1 || {
   exit 1
 }
 
+echo "==> Validating Bicep template"
+az bicep build --file "$SCRIPT_DIR/main.bicep" --stdout >/dev/null
+
 echo "==> Creating resource group $RG in $LOCATION"
 az group create --name "$RG" --location "$LOCATION" \
   --tags project=databricks-lakehouse-mlops env=lab delete-after=same-day --output none
-
-echo "==> Validating Bicep template"
-az bicep build --file "$SCRIPT_DIR/main.bicep" --stdout >/dev/null
 
 DEPLOYMENT_NAME="dbx-churn-$(date -u +%Y%m%d%H%M%S)"
 echo "==> Deploying Bicep template (Databricks workspace takes several minutes)"
@@ -35,7 +35,7 @@ echo "$OUTPUT"
 
 echo ""
 echo "==> Done. Next steps:"
-echo "    1. Upload data/telco_churn.csv to the raw container using --auth-mode login"
-echo "    2. Create the churn-lab Databricks secret scope and store storage-account-key"
-echo "    3. Import notebooks/ and attach a Dedicated single-user Runtime ML cluster"
+echo "    1. Configure Unity Catalog volumes with infra/databricks Terraform"
+echo "    2. Upload generated training/scoring CSVs to the raw external volume"
+echo "    3. Validate and deploy the Databricks bundle"
 echo "    4. When finished: RG=$RG ./infra/teardown.sh"

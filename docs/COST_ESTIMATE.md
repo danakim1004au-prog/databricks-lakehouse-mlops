@@ -1,17 +1,18 @@
-# Cost estimate — same-day deploy/teardown (australiaeast, indicative June 2026 rates)
+# Cost estimate — same-day deploy/teardown (australiaeast, indicative July 2026 assumptions)
 
 Assumption: one lab session uses a single-node cluster for roughly three hours and the resource group is deleted the same day. Azure and Databricks prices vary by subscription, exchange rate, region, and discount.
 
 | Item | Unit price (approx) | Usage | Cost |
 |---|---|---|---|
 | Databricks workspace (Premium) | No separate workspace line item in this estimate | — | AUD 0 |
-| DBU (All-Purpose Compute, Premium) | ~USD 0.55/DBU | D4ds_v5 single node = 1 DBU/h × 3h | ~USD 1.65 |
+| Databricks Jobs Compute DBUs | Check current Databricks pricing for the selected runtime/SKU | One single-node job cluster for the measured run duration | subscription-dependent |
 | VM (Standard_D4ds_v5, 4 vCPU 16GB) | Check the current Azure calculator | 3h × 1 node | subscription-dependent |
 | ADLS Gen2 (Standard LRS) | ~AUD 0.03/GB/month | <1GB, 1 day | ~AUD 0.01 |
 | Access Connector | no separate service charge in this estimate | — | AUD 0 |
+| Unity Catalog metadata and Terraform state | no separate compute line item in this estimate | small lab metadata | AUD 0 |
 | Transactions / egress | negligible | — | <AUD 0.10 |
 
-**Working budget: AUD 5–10 per interactive session.** This deliberately leaves room for cluster start-up time, regional VM differences, transactions, and exchange-rate movement.
+**Working budget: AUD 5–15 per interactive session.** This is a planning guardrail, not a quote; it leaves room for job-cluster start-up time, regional VM/DBU differences, transactions, and exchange-rate movement.
 
 Credits or a free trial can reduce the billed amount, but they do not make the underlying compute free. Confirm the actual estimate in the Azure and Databricks billing portals before running a long session.
 

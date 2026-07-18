@@ -1,0 +1,9 @@
+workspace_host        = "https://adb-0000000000000000.0.azuredatabricks.net"
+workspace_resource_id = "/subscriptions/.../resourceGroups/.../providers/Microsoft.Databricks/workspaces/..."
+workspace_id           = 1234567890123456
+account_id            = "00000000-0000-0000-0000-000000000000"
+metastore_id          = "00000000-0000-0000-0000-000000000000"
+access_connector_id   = "/subscriptions/.../resourceGroups/.../providers/Microsoft.Databricks/accessConnectors/..."
+storage_account_name  = "stdbxchurnxxxxxx"
+catalog_name          = "churn_mlops"
+data_principal        = "churn-mlops-engineers"

@@ -10,32 +10,41 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "numpy>=1.26,<3",
-    "pandas>=2.2,<4",
+    "pandas>=2.2,<3",
     "scikit-learn>=1.4,<2",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "pip-audit>=2.7,<3",
+    "pyspark>=3.5,<3.6",
     "PyYAML>=6,<7",
-    "pytest>=8,<9",
+    "pytest>=9,<10",
+    "pytest-cov>=5,<7",
     "ruff>=0.6,<1",
 ]
 
-[tool.setuptools]
-py-modules = []
+[project.scripts]
+churn-train-local = "databricks_lakehouse_mlops.train_local:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra --strict-markers --cov=databricks_lakehouse_mlops --cov-report=term-missing --cov-fail-under=80"
+
+[tool.coverage.run]
+omit = ["src/databricks_lakehouse_mlops/spark_transforms.py"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-exclude = ["notebooks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
+"notebooks/*.py" = ["E402", "F821"]
 "tests/*.py" = ["E402", "I001"]

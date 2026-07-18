@@ -11,20 +11,30 @@ import pandas as pd
 
 SEED = 42
 N_ROWS = 10_000
-OUT = Path(__file__).parent / "telco_churn.csv"
+TRAIN_OUT = Path(__file__).parent / "telco_churn_train.csv"
+SCORING_OUT = Path(__file__).parent / "telco_churn_scoring.csv"
 
 
-def generate_dataset(n_rows: int = N_ROWS, seed: int = SEED) -> pd.DataFrame:
-    """Return a deterministic synthetic dataset without writing to disk."""
+def generate_dataset(
+    n_rows: int = N_ROWS,
+    seed: int = SEED,
+    *,
+    shift_strength: float = 0.0,
+) -> pd.DataFrame:
+    """Return a deterministic synthetic batch with optional population shift."""
     if n_rows < 100:
         raise ValueError("n_rows must be at least 100 so the duplicate sample is meaningful")
+    if not 0.0 <= shift_strength <= 1.0:
+        raise ValueError("shift_strength must be between zero and one")
 
     rng = np.random.default_rng(seed)
 
     tenure = rng.integers(0, 73, n_rows)
-    monthly = np.round(rng.uniform(18.0, 120.0, n_rows), 2)
+    monthly = np.round(rng.uniform(18.0 + 8.0 * shift_strength, 120.0, n_rows), 2)
     contract = rng.choice(
-        ["Month-to-month", "One year", "Two year"], n_rows, p=[0.55, 0.21, 0.24]
+        ["Month-to-month", "One year", "Two year"],
+        n_rows,
+        p=[0.55 + 0.08 * shift_strength, 0.21, 0.24 - 0.08 * shift_strength],
     )
     internet = rng.choice(["DSL", "Fiber optic", "No"], n_rows, p=[0.34, 0.44, 0.22])
     payment = rng.choice(
@@ -63,7 +73,11 @@ def generate_dataset(n_rows: int = N_ROWS, seed: int = SEED) -> pd.DataFrame:
             "PaperlessBilling": paperless,
             "MonthlyCharges": monthly,
             "TotalCharges": np.round(
-                monthly * np.maximum(tenure, 0) + rng.normal(0, 12, n_rows), 2
+                np.maximum(
+                    monthly * np.maximum(tenure, 0) + rng.normal(0, 12, n_rows),
+                    0,
+                ),
+                2,
             ),
             "Churn": np.where(churn == 1, "Yes", "No"),
         }
@@ -85,9 +99,18 @@ def generate_dataset(n_rows: int = N_ROWS, seed: int = SEED) -> pd.DataFrame:
 
 
 def main() -> None:
-    df = generate_dataset()
-    df.to_csv(OUT, index=False)
-    print(f"Wrote {len(df):,} rows ({df['Churn'].eq('Yes').mean():.1%} churn) -> {OUT}")
+    training = generate_dataset(seed=SEED)
+    scoring = generate_dataset(n_rows=2_500, seed=SEED + 1, shift_strength=0.5)
+    training.to_csv(TRAIN_OUT, index=False)
+    scoring.to_csv(SCORING_OUT, index=False)
+    print(
+        f"Wrote training batch: {len(training):,} rows "
+        f"({training['Churn'].eq('Yes').mean():.1%} churn) -> {TRAIN_OUT}"
+    )
+    print(
+        f"Wrote scoring batch: {len(scoring):,} rows "
+        f"({scoring['Churn'].eq('Yes').mean():.1%} churn) -> {SCORING_OUT}"
+    )
 
 
 if __name__ == "__main__":

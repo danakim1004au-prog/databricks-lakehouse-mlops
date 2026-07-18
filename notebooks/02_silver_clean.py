@@ -1,76 +1,52 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 02 — Silver: clean, dedupe, type, validate
-# MAGIC Handles the three dirt patterns injected upstream: blank `TotalCharges`,
-# MAGIC duplicate rows, mixed-case `Contract`. Ends with hard data-quality gates.
+# MAGIC # 02 — Silver: shared contract validation and deterministic deduplication
+# MAGIC The transform is imported from the same package exercised by local and Spark CI tests.
 
 # COMMAND ----------
 
-from pyspark.sql import functions as F
+import re
+import sys
+from pathlib import Path
 
-dbutils.widgets.text("storage_account", "")
-dbutils.widgets.text("secret_scope", "churn-lab")
-dbutils.widgets.text("secret_key", "storage-account-key")
+src_path = str((Path.cwd().parent / "src").resolve())
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
 
-STORAGE_ACCOUNT = dbutils.widgets.get("storage_account").strip()
-SECRET_SCOPE    = dbutils.widgets.get("secret_scope").strip()
-SECRET_KEY_NAME = dbutils.widgets.get("secret_key").strip()
+from databricks_lakehouse_mlops.spark_transforms import silver_clean_spark
 
-if not STORAGE_ACCOUNT:
-    raise ValueError("Set the storage_account widget to the account name printed by deploy.sh")
-if not SECRET_SCOPE or not SECRET_KEY_NAME:
-    raise ValueError("Set secret_scope and secret_key before running the notebook")
+dbutils.widgets.text("catalog", "")
+dbutils.widgets.text("schema", "")
+dbutils.widgets.text("environment", "dev")
+dbutils.widgets.text("batch_id", "")
 
-STORAGE_KEY = dbutils.secrets.get(scope=SECRET_SCOPE, key=SECRET_KEY_NAME)
+CATALOG = dbutils.widgets.get("catalog").strip()
+SCHEMA = dbutils.widgets.get("schema").strip()
+ENVIRONMENT = dbutils.widgets.get("environment").strip()
+BATCH_ID = dbutils.widgets.get("batch_id").strip()
 
-spark.conf.set(
-    f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net",
-    STORAGE_KEY,
-)
+if not CATALOG or not SCHEMA or not BATCH_ID:
+    raise ValueError("Set catalog, schema, and batch_id")
+if not re.fullmatch(r"[A-Za-z0-9_.-]+", BATCH_ID):
+    raise ValueError("Invalid batch_id")
 
-BRONZE_PATH = f"abfss://bronze@{STORAGE_ACCOUNT}.dfs.core.windows.net/telco_churn"
-SILVER_PATH = f"abfss://silver@{STORAGE_ACCOUNT}.dfs.core.windows.net/telco_churn"
-
-# COMMAND ----------
-
-bronze = spark.read.format("delta").load(BRONZE_PATH)
-
-contract_map = {"MONTH-TO-MONTH": "Month-to-month", "ONE YEAR": "One year", "TWO YEAR": "Two year"}
-
-silver = (
-    bronze
-    .dropDuplicates(["customerID"])
-    # normalise mixed-case Contract values
-    .withColumn(
-        "Contract",
-        F.coalesce(
-            F.create_map([F.lit(x) for kv in contract_map.items() for x in kv])[F.col("Contract")],
-            F.col("Contract"),
-        ),
-    )
-    # blank TotalCharges (tenure==0) -> 0.0
-    .withColumn("TotalCharges", F.when(F.trim("TotalCharges") == "", "0").otherwise(F.col("TotalCharges")))
-    .withColumn("SeniorCitizen", F.col("SeniorCitizen").cast("int"))
-    .withColumn("tenure", F.col("tenure").cast("int"))
-    .withColumn("MonthlyCharges", F.col("MonthlyCharges").cast("double"))
-    .withColumn("TotalCharges", F.col("TotalCharges").cast("double"))
-    .withColumn("churn_label", F.when(F.col("Churn") == "Yes", 1).otherwise(0))
-    .drop("_ingest_ts", "_source_file", "Churn")
-)
+VOLUME_ROOT = f"/Volumes/{CATALOG}/{SCHEMA}"
+BRONZE_BATCH_PATH = f"{VOLUME_ROOT}/bronze/{ENVIRONMENT}/batches/{BATCH_ID}"
+SILVER_BATCH_PATH = f"{VOLUME_ROOT}/silver/{ENVIRONMENT}/batches/{BATCH_ID}"
 
 # COMMAND ----------
 
-# MAGIC %md ## Data-quality gates — fail the job rather than poison Gold
-
-# COMMAND ----------
-
+bronze = spark.read.format("delta").load(BRONZE_BATCH_PATH)
+silver = silver_clean_spark(bronze)
 total = silver.count()
-assert total > 9_000, f"Row count collapsed: {total}"
-assert silver.filter(F.col("customerID").isNull()).count() == 0, "Null customerIDs"
-assert silver.select("customerID").distinct().count() == total, "Duplicates survived"
-assert silver.filter(F.col("TotalCharges").isNull()).count() == 0, "TotalCharges cast produced nulls"
-bad_contract = silver.filter(~F.col("Contract").isin("Month-to-month", "One year", "Two year")).count()
-assert bad_contract == 0, f"{bad_contract} unnormalised Contract values"
+if total == 0:
+    raise ValueError("Silver transform returned no rows")
 
-silver.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(SILVER_PATH)
-print(f"Silver rows: {total:,} (all DQ gates passed)")
+(
+    silver.write.format("delta")
+    .mode("overwrite")
+    .option("overwriteSchema", "true")
+    .save(SILVER_BATCH_PATH)
+)
+dbutils.jobs.taskValues.set(key="silver_rows", value=total)
+print(f"Silver batch {BATCH_ID}: {total:,} rows; all contract gates passed")

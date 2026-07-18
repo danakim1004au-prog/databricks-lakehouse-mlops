@@ -1,11 +1,37 @@
-# Security notes
+# Security policy and lab boundary
 
-This repository is a disposable lab. Never commit Azure storage keys, Databricks tokens, connection strings, or secret-scope values.
+This repository provisions a disposable portfolio lab, but its default data path does not use
+storage account keys. Azure Bicep disables shared-key access and creates an Access Connector;
+the Databricks Terraform layer turns that identity into a Unity Catalog storage credential,
+external locations, and environment-specific external volumes.
 
-- Store the storage account key in a Databricks secret scope as described in the README.
-- Prefer short-lived browser-based OAuth for local Databricks CLI access; do not commit PATs or CLI profiles.
-- Use `--auth-mode login` for Azure CLI uploads rather than putting a key in shell history.
-- If a key or token is exposed, revoke or rotate it in Azure/Databricks before continuing the lab.
-- The Bicep deployment creates a dedicated resource group so the full lab can be deleted after the run.
+## Credential rules
 
-The notebook path reads the storage key only through the Databricks secret API. A long-lived environment should replace this lab shortcut with a Unity Catalog external location backed by the Access Connector's managed identity, then apply least-privilege job and endpoint permissions.
+- Use Azure CLI and Databricks browser-based OAuth locally. Do not create long-lived PATs.
+- Never commit Azure credentials, Databricks profiles, Terraform state, `tfvars`, or plan files.
+- Store CI workspace credentials only in GitHub encrypted secrets. Prefer workload identity/OIDC
+  when the workspace supports it.
+- Production jobs should run as a dedicated service principal granted only `USE CATALOG`,
+  `USE SCHEMA`, model permissions, and the required volume privileges.
+- Rotate or revoke a credential immediately if it appears in logs, screenshots, shell history,
+  Git history, MLflow artifacts, or notebook output.
+
+## Network boundary
+
+`allowPublicNetwork=true` remains the reproducible lab default. A long-lived environment should
+set it to false only after private endpoints, private DNS, VNet injection, and an approved egress
+path are configured. Disabling public access without those dependencies makes the lab unreachable.
+
+## CI and supply chain
+
+- GitHub Actions are pinned to commit SHAs.
+- Dependabot tracks Python, Actions, and Terraform updates.
+- CI runs CodeQL, `pip-audit`, coverage, lint, Bicep compilation, Terraform formatting, shell
+  syntax checks, and optional authenticated Databricks Bundle validation.
+- Review dependency updates and refresh `requirements-dev.lock` deliberately; never merge an
+  automated update solely because CI is green.
+
+## Reporting
+
+Do not open a public issue containing a live credential or exploitable tenant detail. Revoke the
+credential first, then use GitHub's private vulnerability-reporting channel if it is enabled.

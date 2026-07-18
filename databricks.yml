@@ -5,16 +5,26 @@ include:
   - resources/*.yml
 
 variables:
-  storage_account:
-    description: ADLS Gen2 account created by infra/deploy.sh
-  secret_scope:
-    description: Databricks secret scope containing the storage key
-    default: churn-lab
-  secret_key:
-    description: Secret key name within the scope
-    default: storage-account-key
+  catalog:
+    description: Unity Catalog catalog provisioned by infra/databricks Terraform
+  schema:
+    description: Environment-specific Unity Catalog schema
   model_name:
     description: Fully qualified Unity Catalog model name (catalog.schema.model)
+  notification_email:
+    description: Address that receives job failure and duration warnings
+  training_input_path:
+    description: Path inside the raw external volume for the immutable training batch
+    default: training/telco_churn_train.csv
+  scoring_input_path:
+    description: Path or glob inside the raw external volume for the current scoring batch
+    default: scoring/telco_churn_scoring.csv
+  decision_threshold:
+    description: Probability threshold used to create the operational class prediction
+    default: "0.50"
+  inference_alias:
+    description: Registry alias used by scheduled scoring
+    default: staging
   spark_version:
     description: Azure Databricks Runtime ML version for job clusters
     default: 14.3.x-cpu-ml-scala2.12
@@ -34,6 +44,9 @@ targets:
         churn_batch_monitoring:
           schedule:
             pause_status: PAUSED
+    variables:
+      schema: churn_dev
+      inference_alias: staging
 
   prod:
     mode: production
@@ -45,3 +58,6 @@ targets:
         churn_batch_monitoring:
           schedule:
             pause_status: UNPAUSED
+    variables:
+      schema: churn_prod
+      inference_alias: production
