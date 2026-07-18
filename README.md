@@ -21,6 +21,10 @@ overnight.
 Two lanes, deliberately. The retraining job never scores its own training data, and the scheduled
 scoring job has no path to `@production`.
 
+![Lakehouse MLOps architecture](docs/databricks-lakehouse-mlops-architecture.png)
+
+The same two lanes as source-controlled diagrams, so they stay in step with the code:
+
 ```mermaid
 flowchart TB
     subgraph train["Training and promotion (weekly in prod, manual in dev)"]
