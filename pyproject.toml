@@ -20,7 +20,7 @@ dev = [
     "pyspark>=3.5,<3.6",
     "PyYAML>=6,<7",
     "pytest>=9,<10",
-    "pytest-cov>=5,<7",
+    "pytest-cov>=5,<8",
     "ruff>=0.6,<1",
 ]
 
