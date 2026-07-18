@@ -4,66 +4,98 @@
 [![CodeQL](https://github.com/danakim1004au-prog/databricks-lakehouse-mlops/actions/workflows/codeql.yml/badge.svg)](https://github.com/danakim1004au-prog/databricks-lakehouse-mlops/actions/workflows/codeql.yml)
 [![Licence: MIT](https://img.shields.io/badge/Licence-MIT-blue.svg)](LICENSE)
 
-An end-to-end customer-retention MLOps reference that separates training from new-batch scoring,
-registers probability models in Unity Catalog, gates model promotion, and retains auditable data,
-model, batch, and job lineage. The data is synthetic; the implementation focus is reproducibility,
-failure gates, least privilege, cost control, and observable operational behaviour.
+A telco customer-churn project on Azure Databricks that I built to behave like a system you could
+operate, not a notebook demo. Training and new-batch scoring run as separate lifecycles. The model
+is registered in Unity Catalog as a probability model, promotion to `@production` needs a named
+approver, and every scored row records enough lineage to reproduce it: the batch, the job run, the
+model version, the Gold Delta snapshot and the decision threshold.
 
-![Lakehouse MLOps architecture](docs/databricks-lakehouse-mlops-architecture.png)
+The data is synthetic, so the model itself proves nothing. What I care about is the machinery
+around it: contract gates that fail loudly instead of coercing bad values, an ingestion ledger
+that stops a schedule re-scoring the same file forever, managed-identity storage access with no
+account keys anywhere, and schedules that are paused in dev so a forgotten deploy doesn't bill me
+overnight.
 
-## Operational lifecycle
+## Architecture
 
-```text
-Training CSV batch
-  -> Bronze(batch_id) -> Silver contract gates -> Gold features(batch_id)
-  -> train / validation / untouched test
-  -> baseline vs challenger in MLflow
-  -> absolute + champion non-regression gates
-  -> @candidate -> @staging
-  -> explicit approver job -> @production
+Two lanes, deliberately. The retraining job never scores its own training data, and the scheduled
+scoring job has no path to `@production`.
 
-New scoring CSV batch
-  -> Bronze(batch_id) -> Silver -> Gold(batch_id)
-  -> model @staging in dev / @production in prod
-  -> probability + thresholded prediction
-  -> labelled AUC, AP, F1, accuracy and feature-shift gates
-  -> append-only monitoring history with full lineage
+```mermaid
+flowchart TB
+    subgraph train["Training and promotion (weekly in prod, manual in dev)"]
+        T1["Training CSV batch"] --> T2["Bronze (per batch_id)"]
+        T2 --> T3["Silver contract gates"]
+        T3 --> T4["Gold features (per batch_id)"]
+        T4 --> T5["Train / validation / untouched test split"]
+        T5 --> T6["Baseline vs challenger in MLflow"]
+        T6 --> T7{"Absolute floors +<br/>champion non-regression gate"}
+        T7 -->|pass| T8["@candidate then @staging"]
+        T7 -->|fail| T9["Job fails, aliases untouched"]
+        T8 --> T10["Manual promotion job:<br/>approver + confirm=PROMOTE"]
+        T10 --> T11["@production"]
+    end
+
+    subgraph score["New-batch scoring and monitoring (daily in prod)"]
+        S1["New scoring CSV batch"] --> S2{"Ingestion ledger:<br/>path + mtime + size already seen?"}
+        S2 -->|unseen| S3["Bronze, Silver, Gold (per batch_id)"]
+        S2 -->|seen| S4["Fail: no unprocessed scoring files"]
+        S3 --> S5["Score with @staging (dev)<br/>or @production (prod)"]
+        S5 --> S6["churn_probability + thresholded decision"]
+        S6 --> S7{"AUC / AP / F1 / accuracy /<br/>feature-shift gates"}
+        S7 -->|always| S8["Append-only monitoring history"]
+        S7 -->|breach| S9["Job fails after the history write"]
+    end
+
+    T11 -.-> S5
 ```
 
-The retraining job never scores its own training batch. The daily job rebuilds an explicit scoring
-batch before inference. For real churn outcomes, run monitoring only after delayed labels arrive;
-the synthetic scoring batch includes labels so the complete control loop is reproducible.
+Storage access is managed identity end to end:
 
-## What is captured for every scored batch
+```mermaid
+flowchart LR
+    W["Databricks workspace"] --> AC["Access Connector<br/>managed identity"]
+    AC --> SC["UC storage credential"]
+    SC --> EL["External locations"]
+    EL --> V["raw / bronze / silver / gold<br/>volumes per environment"]
+    V --> N["Notebooks and jobs"]
+```
 
-| Field | Purpose |
+One honest caveat about the monitoring lane: real churn labels arrive weeks after scoring. The
+synthetic scoring batch ships with labels so the whole control loop is reproducible in a single
+run, and the notebooks mark where the day-0 scoring / day-N label-join boundary would sit in a
+real system.
+
+## What every scored batch records
+
+| Field | Why it's there |
 |---|---|
-| `batch_id`, `job_run_id`, `environment` | Identify the data and orchestrator run |
+| `batch_id`, `job_run_id`, `environment` | Identify the data and the orchestrator run |
 | `model_name`, `model_alias`, `model_version`, `model_run_id` | Reproduce the exact model |
 | `gold_delta_version` | Anchor the input Delta snapshot |
 | `decision_threshold` | Reproduce the operational class decision |
-| `churn_probability`, `churn_prediction` | Support ranking and threshold changes |
-| `scored_ts`, `monitored_ts` | Audit scoring and monitoring time |
+| `churn_probability`, `churn_prediction` | Rank customers and change thresholds without retraining |
+| `scored_ts`, `monitored_ts` | Audit when scoring and monitoring happened |
 
 ## Repository layout
 
 | Path | Purpose |
 |---|---|
 | `infra/main.bicep` | ADLS Gen2, Premium workspace, Access Connector, shared-key disablement |
-| `infra/databricks/` | Metastore assignment, managed-identity credential, UC locations/volumes/grants |
+| `infra/databricks/` | Metastore assignment, managed-identity credential, UC locations, volumes, grants |
 | `databricks.yml` | Environment-isolated bundle targets and variables |
 | `resources/churn_jobs.yml` | Retraining, scoring/monitoring, and manual promotion jobs |
 | `src/databricks_lakehouse_mlops/` | Shared Pandas/Spark contracts and feature transforms |
-| `notebooks/01...07` | Versioned ingest through explicit production promotion |
+| `notebooks/01...07` | Versioned ingest through to explicit production promotion |
 | `data/generate_churn_data.py` | Seeded, distinct training and shifted scoring batches |
 | `tests/` | Failure-path, feature-contract, Spark, and bundle safety tests |
-| `.github/workflows/` | CI, CodeQL, dependency audit, IaC, and optional bundle validation |
+| `.github/workflows/` | CI, CodeQL, dependency audit, IaC checks, optional bundle validation |
 | `serving/databricks.yml` | Optional environment-tagged scale-to-zero endpoint |
 | `docs/COST_ESTIMATE.md` | Cost assumptions and recurring-spend traps |
 
 ## Local quality gate
 
-Python 3.10 or newer and Java 17 are required for the local Spark contract tests.
+You need Python 3.10 or newer, plus Java 17 for the local Spark contract tests.
 
 ```bash
 python3 -m venv .venv
@@ -79,14 +111,13 @@ ruff check .
 pip-audit -r requirements-dev.lock
 ```
 
-The generated CSVs are ignored because both batches are deterministic. `requirements-dev.lock`
-pins direct CI dependencies; Dependabot proposes reviewed updates.
+The generated CSVs are gitignored because both batches are deterministic from their seeds.
+`requirements-dev.lock` pins the direct CI dependencies; Dependabot proposes reviewed updates.
 
 ### Deterministic local reference result
 
-The current seeded local smoke run produced the following result on Python 3.12. These values are
-sanity evidence rather than a production performance claim; Databricks MLflow remains the source
-of record for workspace runs.
+The seeded local smoke run on Python 3.12 produced the numbers below. Treat them as sanity
+evidence, not a performance claim. Databricks MLflow is the source of record for workspace runs.
 
 | Input/result | Value |
 |---|---:|
@@ -105,13 +136,13 @@ az login
 ```
 
 The Bicep deployment creates a disposable resource group, ADLS Gen2 containers, a Premium
-workspace, and an Access Connector. Storage shared-key authentication is disabled; data access is
-completed through Unity Catalog managed identity.
+workspace and an Access Connector. Storage shared-key authentication is disabled at the account
+level, so all data access goes through the Unity Catalog managed identity.
 
 ## 2. Bootstrap Unity Catalog
 
-An existing regional Unity Catalog metastore and account-admin access are prerequisites. Copy the
-example variables, fill the Bicep outputs and account identifiers, and apply the Databricks layer:
+You need an existing regional Unity Catalog metastore and account-admin access. Copy the example
+variables, fill in the Bicep outputs and account identifiers, then apply the Databricks layer:
 
 ```bash
 cd infra/databricks
@@ -123,13 +154,14 @@ terraform apply
 cd ../..
 ```
 
-See [`infra/databricks/README.md`](infra/databricks/README.md) for the created security boundary.
-Use separate principals and remote Terraform state in a long-lived tenancy.
+[`infra/databricks/README.md`](infra/databricks/README.md) describes the security boundary this
+creates. In a long-lived tenancy you'd want separate principals and remote Terraform state; for a
+disposable lab, local state is a deliberate trade-off.
 
 ## 3. Generate and upload distinct batches
 
 Authenticate to the workspace with browser OAuth, then upload the two files to the raw external
-volume. Repeat for `churn_prod` only when production testing is intentional.
+volume. Only repeat this for `churn_prod` when you actually mean to test production.
 
 ```bash
 databricks auth login --host https://<workspace-url> --profile churn-lab
@@ -142,9 +174,10 @@ databricks fs cp data/telco_churn_scoring.csv \
   dbfs:/Volumes/churn_mlops/churn_dev/raw/scoring/telco_churn_scoring.csv --overwrite
 ```
 
-## 4. Validate, deploy, and train
+## 4. Validate, deploy and train
 
-All bundle commands require a fully qualified Unity Catalog model and a real notification address.
+Every bundle command needs a fully qualified Unity Catalog model name and a real notification
+address.
 
 ```bash
 databricks bundle validate -t dev \
@@ -163,9 +196,9 @@ databricks bundle run -t dev churn_retraining \
   --var="notification_email=<your-email>"
 ```
 
-Model selection uses validation ROC-AUC. The untouched test set must meet ROC-AUC, average
-precision, and F1 floors and may not regress materially against the current production champion.
-A passing candidate updates `@candidate` and `@staging`; it does not update `@production`.
+Model selection uses validation ROC-AUC only. The untouched test set then has to clear ROC-AUC,
+average precision and F1 floors, and can't regress materially against the current production
+champion. A passing candidate updates `@candidate` and `@staging`. It never touches `@production`.
 
 ## 5. Score a new batch and monitor
 
@@ -176,18 +209,21 @@ databricks bundle run -t dev churn_batch_monitoring \
   --var="notification_email=<your-email>"
 ```
 
-Development scoring uses `@staging`; production scoring uses `@production`. Each run gets an
-isolated batch path. Monitoring appends AUC, average precision, F1, accuracy, positive rate, and
-maximum standardised feature-mean shift. Failed gates fail the job and trigger notifications.
-An ingestion ledger rejects source files with an already processed path, modification time, and
-size, so a schedule cannot silently append duplicate monitoring results. Upload a new dated file
-or replace the scoring object before the next scheduled run.
+Dev scores with `@staging`, prod with `@production`. Each run writes to an isolated batch path.
+Monitoring appends AUC, average precision, F1, accuracy, positive rate and the maximum
+standardised feature-mean shift. A breached gate still writes the history row first, then fails
+the job and triggers notifications, so failed runs stay auditable.
+
+The ingestion ledger rejects any source file whose path, modification time and size have already
+been processed. Without it, a daily schedule pointed at a stale file would happily append the
+same monitoring results forever. Upload a new dated file, or replace the scoring object, before
+the next scheduled run.
 
 ## 6. Explicit production promotion
 
-The promotion job has no schedule and requires both an approver and a literal confirmation token.
-It verifies that the staging version has a passing gate record before moving `@production` and
-appends a promotion audit record.
+The promotion job has no schedule. It wants both an approver and a literal confirmation token,
+checks that the staging version has a passing gate record, moves `@production`, and appends a
+promotion audit record.
 
 ```bash
 databricks bundle run -t dev churn_model_promotion \
@@ -198,14 +234,15 @@ databricks bundle run -t dev churn_model_promotion \
 ```
 
 For a real production release, deploy the `prod` target with
-`churn_mlops.churn_prod.churn_classifier`, retrain/gate in that environment, and approve there.
-This prevents dev data, aliases, Delta paths, experiments, and schedules from colliding with prod.
+`churn_mlops.churn_prod.churn_classifier`, retrain and gate in that environment, and approve
+there. Dev and prod get separate data paths, aliases, experiments and schedules, so one can't
+clobber the other.
 
 ## Optional real-time serving
 
-After approval, resolve the numeric version currently carrying `@production`, then deploy the
-separate serving bundle. Keeping a numeric serving version makes a deployment immutable and makes
-rollback explicit.
+After approval, resolve the numeric version currently carrying `@production` and deploy the
+separate serving bundle with that number. I pin the numeric version on purpose: an endpoint that
+tracks an alias can change model underneath you, and rollback stops being explicit.
 
 ```bash
 cd serving
@@ -214,21 +251,29 @@ databricks bundle deploy -t prod \
   --var="model_version=<production-version>"
 ```
 
-The endpoint is Small, environment-tagged, and scales to zero. Destroy it after the demonstration
-because serving is billed independently from job compute.
+The endpoint is Small, environment-tagged and scales to zero. Destroy it after the demo. Serving
+bills separately from job compute and it is easy to forget.
 
-## Quality, security, and cost controls
+## Quality, security and cost controls
 
-- Shared transformations prevent Pandas/Spark feature drift; CI runs the Spark functions directly.
-- Invalid labels, contracts, ranges, schema changes, and conflicting duplicates fail before Gold.
-- Job retries cover transient ingest/transform failures; duration and failure notifications are set.
-- GitHub Actions are SHA-pinned; CodeQL, Dependabot, `pip-audit`, and coverage are enabled.
+CI runs the actual Spark transform functions, not a pandas imitation of them. The shared
+transform package exists because the local mirror and the notebooks drifted apart once before (a
+pandas dtype difference that only surfaced on the cluster), and I'd rather not debug that twice.
+
+The Silver layer is strict on purpose. Invalid churn labels, unknown contract values, negative
+numerics, missing schema columns and conflicting duplicates all fail the run before Gold. The old
+behaviour of mapping anything that wasn't "Yes" to 0 was quietly turning typos into non-churners.
+
+Elsewhere:
+
+- Jobs retry transient ingest and transform failures, and send duration and failure notifications.
+- GitHub Actions are SHA-pinned. CodeQL, Dependabot, `pip-audit` and a coverage floor are enabled.
 - Dev schedules are paused. Prod enables daily scoring and weekly retraining explicitly.
-- Managed identity and UC volumes replace storage keys. Public networking remains a documented lab
+- Managed identity and UC volumes replace storage keys. Public networking stays a documented lab
   toggle, not an implied production default.
-- Predictions are immutable per batch; monitoring and promotions are append-only audit histories.
+- Predictions are immutable per batch. Monitoring and promotion histories are append-only.
 
-## Verified evidence and current limitations
+## Evidence and current limitations
 
 | Compute | Bronze | Gold |
 |---|---|---|
@@ -242,15 +287,17 @@ because serving is billed independently from job compute.
 |---|
 | ![Successful workflow](docs/images/07-churn-retraining-workflow-success.png) |
 
-The screenshots demonstrate the earlier storage-key lab run and should be refreshed after the
-managed-identity deployment. The current monitoring uses labelled synthetic batches and simple
-standardised mean shift; production systems should add delayed-label orchestration, segment-level
-drift, calibration, fairness review, alert routing, retention policies, and private networking.
+Being upfront: these screenshots are from the earlier storage-key version of this lab. They show
+the pipeline ran end to end in Azure, but the managed-identity rebuild hasn't been re-run in a
+live workspace yet, and I'll refresh them once it has.
+
+Other known gaps: monitoring uses labelled synthetic batches and a simple standardised mean
+shift. A production system would add delayed-label orchestration, segment-level drift,
+calibration checks, fairness review, alert routing, retention policies and private networking.
 
 ## Teardown
 
-Destroy optional serving first, destroy bundle-managed resources, then request Azure resource-group
-deletion and verify completion:
+Destroy optional serving first, then the bundle-managed resources, then the resource group:
 
 ```bash
 databricks bundle destroy -t dev \
@@ -261,5 +308,5 @@ RG=rg-dbx-churn-lab-aue ./infra/teardown.sh
 az group exists --name rg-dbx-churn-lab-aue
 ```
 
-See [`docs/COST_ESTIMATE.md`](docs/COST_ESTIMATE.md) and [`SECURITY.md`](SECURITY.md) before using
-an unpaused target or leaving an endpoint deployed.
+Read [`docs/COST_ESTIMATE.md`](docs/COST_ESTIMATE.md) and [`SECURITY.md`](SECURITY.md) before
+unpausing a target or leaving an endpoint deployed.
